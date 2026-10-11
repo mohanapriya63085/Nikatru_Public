@@ -365,6 +365,7 @@ jobs:
             -scheme Runner \
             -destination "platform=iOS Simulator,id=${UDID}" \
             -only-testing:RunnerTests/StoreBillingTests \
+            -parallel-testing-enabled NO \
             CODE_SIGNING_ALLOWED=NO | tee "${RUNNER_TEMP}/xcodebuild.log"
           out="${RUNNER_TEMP}/storekit-jws-${APP}.json"
           [ -s "$out" ] || { echo "::error title=StoreKit harness::the harness wrote no transaction JWS to ${out}, so the server cannot be shown refusing one"; exit 1; }
