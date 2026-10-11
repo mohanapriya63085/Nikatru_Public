@@ -330,6 +330,25 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.heartbeats.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every Paddle payout has its e-FIRC inside 30 days
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/gst/efirc.mjs watch
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            # NO BACKTICKS ANYWHERE IN THESE STRINGS (see the analytics step above).
+            echo "::error title=The e-FIRC state is UNKNOWN - nothing was judged::The state file is unreadable or carries a field outside its money-free schema, or it does not yet cover the payouts of the month that must be known by now. Run the GST sales register for each month named, then efirc.mjs sync, and merge the state file (docs/ops/gst-sales-register.md). NOTHING was judged, and that is never a pass."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A Paddle payout is past 30 days with no e-FIRC::The step log names the payout key and its age. Get the e-FIRC from SBI, then efirc.mjs mark --received and efirc.mjs sync on the operator machine, and merge the state file (docs/ops/gst-sales-register.md)."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.heartbeats.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
