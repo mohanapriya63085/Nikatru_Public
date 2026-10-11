@@ -884,18 +884,24 @@ jobs:
           # Tamil parity, from gen-l10n's own diagnostic. The ENFORCEMENT half is
           # packages/design_system/test/chassis_l10n_parity_test.dart, which names
           # the keys; this is the cheap early read of the same fact.
-          # ⏱ 2026-10-10 · #251: a feature PR ships English only (#215) and lists the
-          # key in tooling/i18n/pending.json for the translations train, which the
-          # parity test excuses; `= '{}'` refused every such PR that added a chassis
-          # string. Fails only on an untranslated key pending.json does not list.
+          # ⏱ 2026-10-10 · #251 / st-app-full-review: the SAME fact, so the same
+          # excuse. A feature PR carries English only (#215, translate.mjs, lane
+          # i18n-one-pipeline) and the parity test excuses exactly the keys
+          # tooling/i18n/pending.json `files` lists for that ARB; `= '{}'` refused
+          # every new chassis key. Anything gen-l10n reports that pending.json does
+          # not list still fails, and a missing pending.json excuses nothing.
           node -e '
-          const fs = require("fs");
-          const u = JSON.parse(fs.readFileSync("packages/design_system/chassis-l10n-untranslated.json", "utf8") || "{}");
-          const p = JSON.parse(fs.readFileSync("tooling/i18n/pending.json", "utf8")).locales || {};
-          const owed = [];
-          for (const [loc, keys] of Object.entries(u)) for (const k of keys) if (!((p[loc] && p[loc].missing && p[loc].missing.chassis) || []).includes(k)) owed.push(loc + ":" + k);
-          if (owed.length) { console.error("untranslated and NOT listed in tooling/i18n/pending.json: " + owed.join(", ")); process.exit(1); }
-          console.log("ok: every untranslated chassis key is pending for the translations train (" + Object.values(u).flat().length + ")");'
+            const fs = require("fs");
+            const u = JSON.parse(fs.readFileSync("packages/design_system/chassis-l10n-untranslated.json", "utf8") || "{}");
+            const files = fs.existsSync("tooling/i18n/pending.json")
+              ? (JSON.parse(fs.readFileSync("tooling/i18n/pending.json", "utf8")).files || {}) : {};
+            let bad = 0;
+            for (const [code, keys] of Object.entries(u)) {
+              const owed = new Set(files[`packages/design_system/lib/src/l10n/chassis_${code}.arb`] || []);
+              for (const k of keys) if (!owed.has(k)) { console.error(`untranslated, not pending: ${code} ${k}`); bad++; }
+            }
+            if (bad) process.exit(1);
+            console.log("ok: every untranslated chassis key is pending for the translations train (" + Object.values(u).flat().length + ")");'
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-apps.workspace-gate.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
