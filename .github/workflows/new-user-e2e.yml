@@ -382,7 +382,6 @@ jobs:
       id-token: write
     env:
       WRANGLER_SEND_METRICS: 'false'
-      NUJ_STACK_DIR: ${{ runner.temp }}/nuj-first-sign-in
       GOTRUE_URL: http://127.0.0.1:9999
       SUPABASE_URL: http://127.0.0.1:54321
       WORKER_URL: http://127.0.0.1:8787
@@ -426,6 +425,14 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: The ephemeral stack's directory, under this job's temp
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          echo "NUJ_STACK_DIR=${RUNNER_TEMP}/nuj-first-sign-in" >> "$GITHUB_ENV"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - uses: ./.github/actions/setup-node
         with:
           cache-dependency-path: services/platform/package-lock.json
@@ -437,7 +444,7 @@ jobs:
           npm ci --no-audit --no-fund
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Bring up the ephemeral identity stack
         timeout-minutes: 8
         run: |
@@ -446,7 +453,7 @@ jobs:
           node tooling/e2e/first-sign-in/stack.mjs up
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Apply the platform D1 migrations (local)
         working-directory: services/platform
         run: |
@@ -455,7 +462,7 @@ jobs:
           npx wrangler d1 migrations apply PLATFORM_DB --local --env sandbox --persist-to "$RUNNER_TEMP/wrangler-state"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Start the platform Worker against the ephemeral GoTrue
         working-directory: services/platform
         run: |
@@ -477,7 +484,7 @@ jobs:
           exit 2
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: First sign-in legs
         timeout-minutes: 5
         run: |
@@ -491,7 +498,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stack and Worker logs
         if: failure()
         run: |
@@ -501,7 +508,7 @@ jobs:
           tail -150 "$RUNNER_TEMP/wrangler.log"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Tear down
         if: always()
         run: |
@@ -510,7 +517,7 @@ jobs:
           node tooling/e2e/first-sign-in/stack.mjs down
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name new-user-e2e.first-sign-in.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
