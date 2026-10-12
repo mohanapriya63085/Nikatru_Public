@@ -205,7 +205,7 @@ jobs:
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: services/platform
           command: d1 migrations apply PLATFORM_DB --env sandbox --remote
@@ -213,7 +213,7 @@ jobs:
         if: needs.workers.outputs.platform == 'true'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: services/platform
           command: deploy --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}
@@ -285,7 +285,7 @@ jobs:
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: ${{ matrix.worker.dir }}
           command: d1 migrations apply ${{ matrix.worker.migrations }} --env sandbox --remote
@@ -293,7 +293,7 @@ jobs:
         if: matrix.worker.worker != 'none'
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: ${{ matrix.worker.dir }}
           command: deploy --env sandbox --var RELEASE:${{ env.NIKATRU_SHA }}

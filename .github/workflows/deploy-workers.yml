@@ -192,7 +192,7 @@ jobs:
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: ${{ matrix.worker.dir }}
           command: d1 migrations apply ${{ matrix.worker.migrations }} --remote
@@ -207,7 +207,7 @@ jobs:
         id: deploy
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: ${{ matrix.worker.dir }}
           command: deploy --var GLITCHTIP_DSN:${{ secrets[matrix.worker.dsnSecret] }} --var RELEASE:${{ env.NIKATRU_SHA }}
@@ -312,7 +312,7 @@ jobs:
         id: deploy
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: services/platform
           command: deploy --var GLITCHTIP_DSN:${{ secrets.GLITCHTIP_DSN }} --var RELEASE:${{ env.NIKATRU_SHA }} --secrets-file ${{ runner.temp }}/platform-secrets.json
@@ -398,7 +398,7 @@ jobs:
         id: deploy
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.147.0'
+          wranglerVersion: '4.149.0'
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: services/edge-shield
           command: deploy --var RELEASE:${{ env.NIKATRU_SHA }}
