@@ -149,6 +149,8 @@ jobs:
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main-schedule
       - uses: ./.github/actions/setup-node
+      - name: Generate the discovery surface (the sitemap is never committed)
+        run: node tooling/sites/generate-discovery.mjs
       - name: Grade the committed status site
         run: |
           node tooling/ci/check-site-integrity.mjs . sites/status
