@@ -260,7 +260,7 @@ jobs:
     name: StoreKit Testing — ${{ matrix.app }} (simulator)
     needs: generated
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -352,33 +352,79 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: xcodebuild test — StoreBillingTests
+        id: xctest
+        timeout-minutes: 25
         env:
           TEST_RUNNER_STOREKIT_CONFIG: ${{ github.workspace }}/tooling/store-billing/generated/${{ matrix.app }}.storekit
           TEST_RUNNER_STOREKIT_JWS_OUT: ${{ runner.temp }}/storekit-jws-${{ matrix.app }}.json
           UDID: ${{ steps.sim.outputs.udid }}
+          XCODEBUILD_BUDGET_S: '1380'
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
+          log="${RUNNER_TEMP}/xcodebuild.log"
           xcodebuild test \
             -workspace "apps/${APP}/ios/Runner.xcworkspace" \
             -scheme Runner \
             -destination "platform=iOS Simulator,id=${UDID}" \
             -only-testing:RunnerTests/StoreBillingTests \
             -parallel-testing-enabled NO \
-            CODE_SIGNING_ALLOWED=NO | tee "${RUNNER_TEMP}/xcodebuild.log"
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 120 \
+            -maximum-test-execution-time-allowance 180 \
+            -resultBundlePath "${RUNNER_TEMP}/StoreBillingTests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO >"$log" 2>&1 &
+          xb=$!
+          ( sleep "$XCODEBUILD_BUDGET_S"; echo "WATCHDOG: xcodebuild ran past ${XCODEBUILD_BUDGET_S}s; stopping it" >>"$log"; kill -TERM "$xb" ) >/dev/null 2>&1 &
+          dog=$!
+          code=0
+          wait "$xb" || code=$?
+          pkill -P "$dog" 2>/dev/null || true
+          kill "$dog" 2>/dev/null || true
+          grep -E '^(Test Case .*(passed|failed)|Executed [0-9]+ tests?)|error:|WATCHDOG' "$log" | tail -n 80 || true
+          [ "$code" -eq 0 ] || { echo "::error title=StoreKit harness::xcodebuild test exited ${code}; the tail of xcodebuild.log follows in the next step"; exit "$code"; }
           out="${RUNNER_TEMP}/storekit-jws-${APP}.json"
           [ -s "$out" ] || { echo "::error title=StoreKit harness::the harness wrote no transaction JWS to ${out}, so the server cannot be shown refusing one"; exit 1; }
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The tail of xcodebuild.log (red or cancelled run)
+        if: always() && (steps.xctest.outcome == 'failure' || steps.xctest.outcome == 'cancelled')
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          log="${RUNNER_TEMP}/xcodebuild.log"
+          if [ -s "$log" ]; then
+            tail -n 300 "$log"
+          else
+            echo "xcodebuild.log is empty or missing: xcodebuild never started"
+          fi
+          exit 1
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store storekit-xcresult-${{ matrix.app }} in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/xcodebuild.log
+            ${{ runner.temp }}/StoreBillingTests.xcresult
+          NIKATRU_ARTIFACT_NAME: storekit-xcresult-${{ matrix.app }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           npm ci
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
         working-directory: services/platform
       - name: POST every Xcode-signed transaction to /v1/receipts/apple_iap → 403
         working-directory: services/platform
@@ -390,7 +436,7 @@ jobs:
           npx vitest run test/store-billing-apple-local-jws.test.ts
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
