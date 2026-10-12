@@ -601,7 +601,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           flutter pub get
           flutter analyze --no-fatal-infos
-          flutter test
+          flutter test --file-reporter "json:${NIKATRU_TEST_RESULTS:-$RUNNER_TEMP}/probe.json"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-apps.app-brick.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -705,7 +705,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           flutter pub get
           flutter analyze --no-fatal-infos
-          flutter test
+          flutter test --file-reporter "json:${NIKATRU_TEST_RESULTS:-$RUNNER_TEMP}/probeapi.json"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-apps.app-brick.52 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -970,7 +970,9 @@ jobs:
           members="$(melos list --parsable --flutter --dir-exists=test "$filter")"
           echo "$members"
           if [ -z "$members" ]; then echo "::error::leg '$PART' ($filter) matched no Flutter member with tests, so it would test nothing"; exit 1; fi
-          melos exec --fail-fast --dir-exists=test --flutter "$filter" -- flutter test
+          export NIKATRU_TEST_RESULTS="${NIKATRU_TEST_RESULTS:-$RUNNER_TEMP/test-results}"
+          mkdir -p "$NIKATRU_TEST_RESULTS"
+          melos exec --fail-fast --dir-exists=test --flutter "$filter" -- flutter test '--file-reporter=json:$NIKATRU_TEST_RESULTS/$MELOS_PACKAGE_NAME.json'
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-apps.workspace-gate.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

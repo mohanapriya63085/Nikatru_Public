@@ -239,7 +239,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          flutter test test/store_billing_play_scenarios_test.dart test/store_billing_apple_scenarios_test.dart
+          flutter test --file-reporter "json:${NIKATRU_TEST_RESULTS:-$RUNNER_TEMP}/billing_store.json" test/store_billing_play_scenarios_test.dart test/store_billing_apple_scenarios_test.dart
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.client.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

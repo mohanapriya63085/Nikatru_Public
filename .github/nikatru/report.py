@@ -28,7 +28,8 @@
 #   item 3: the private repo's test output and PR text never sit in plain text in the
 #   PUBLIC repo's Actions cache). Its generated hand-off step runs, from the private
 #   checkout, this same file:
-#   shell-report.py handoff the tail of $RUNNER_TEMP/report-detail.md, sealed with
+#   shell-report.py handoff $RUNNER_TEMP/report-detail.md within the cap (fit_bytes: each
+#                           red section's failing tests kept, its tail cut first), sealed with
 #                           NIKATRU_DETAIL_KEY and bound to its own cache key
 #                           (NIKATRU_HANDOFF), written as .nikatru-detail/detail.sealed,
 #                           and `has=true` to $GITHUB_OUTPUT so actions/cache/save runs;
@@ -247,8 +248,93 @@ def tail_bytes(text, cap):
     return note + cut
 
 
+# ⏱ 2026-10-12 · red-detail-failures-first: a red test step's detail lost every failing test's name. The
+# quiet-step wrapper kept the output's tail, and the hand-off's 16 KiB cut here kept only the END of that, so
+# PR #429's ten failures (run 38262466034) reached the private pull request as a hundred passing lines. The
+# wrapper (its detailSection, in tooling/ci) now writes a red step's failing tests and counts ABOVE an
+# OUTPUT_TAIL_MARK line; a cut keeps every section's header and that head, and cuts the section's tail.
+OUTPUT_TAIL_MARK = '#### output tail'
+# The head never takes more than this share of its section's bytes, so the output's last lines survive too.
+HEAD_SHARE = 0.75
+
+
+def head_bytes(text, cap):
+    """The first `cap` bytes of `text`, cut back to a whole line and saying so."""
+    raw = text.encode('utf-8')
+    if len(raw) <= cap:
+        return text
+    note = '(later lines cut to fit the report)\n'
+    cut = raw[:max(0, cap - len(note.encode('utf-8')))].decode('utf-8', errors='ignore')
+    nl = cut.rfind('\n')
+    return (cut[:nl + 1] if nl >= 0 else '') + note
+
+
+# ⏱ 2026-10-12 · review of #447, finding 6: under this many bytes a section's share cannot hold its failures
+# block AND a useful tail (sixteen or more red sections in one 16 KiB hand-off), so fit_small keeps the two
+# lines that matter, the section's header and its first failing test, and only then any tail that still fits.
+SECTION_FLOOR = 1024
+SMALL_TAIL_MIN = 256
+
+
+def fit_small(text, cap):
+    """A section in a share under SECTION_FLOOR: its `### ` header and its first `✖ ` failing test, then the end
+    of its output if SMALL_TAIL_MIN bytes are left. A section with neither keeps its tail, as before."""
+    lines = text.split('\n')
+    keep = lines[:1] if lines[0].startswith('### ') else []
+    keep += [line for line in lines if line.startswith('✖ ')][:1]
+    if not keep:
+        return tail_bytes(text, cap)
+    note = '(cut to fit the report)\n'
+    room = cap - len(note.encode('utf-8'))
+    raw = ('\n'.join(keep) + '\n').encode('utf-8')
+    if len(raw) > room:
+        raw = raw[:max(0, room - 1)] + b'\n'
+    head = raw.decode('utf-8', errors='ignore') + note
+    left = cap - len(head.encode('utf-8'))
+    mark = text.find('\n' + OUTPUT_TAIL_MARK + '\n')
+    rest = text[mark + len(OUTPUT_TAIL_MARK) + 2:] if mark >= 0 else '\n'.join(lines[1:])
+    return head + (tail_bytes(rest, left) if left >= SMALL_TAIL_MIN else '')
+
+
+def fit_section(text, cap):
+    """One `### ` section within `cap` bytes: its header line and the part above OUTPUT_TAIL_MARK kept first,
+    the rest (the output's tail) cut from its start."""
+    if len(text.encode('utf-8')) <= cap:
+        return text
+    if cap < SECTION_FLOOR:
+        return fit_small(text, cap)
+    mark = text.find('\n' + OUTPUT_TAIL_MARK + '\n')
+    if mark >= 0:
+        cut = mark + len(OUTPUT_TAIL_MARK) + 2
+    elif text.startswith('### ') and '\n' in text:
+        cut = text.index('\n') + 1
+    else:
+        return tail_bytes(text, cap)
+    head, rest = text[:cut], text[cut:]
+    head_cap = int(cap * HEAD_SHARE)
+    if len(head.encode('utf-8')) > head_cap:
+        head = head_bytes(head, head_cap - len(OUTPUT_TAIL_MARK) - 1) + OUTPUT_TAIL_MARK + '\n'
+    return head + tail_bytes(rest, cap - len(head.encode('utf-8')))
+
+
+def fit_bytes(text, cap):
+    """`text` within `cap` bytes, cut section by section (a section starts at a `### RED ` or `### NOTE ` line,
+    the two headers the quiet-step wrapper writes; ⏱ 2026-10-12 · review of #447, finding 8: any other `### `
+    line is the step's own output, inside its section's tail): a section
+    smaller than its fair share is kept whole and leaves the rest to the larger ones, each cut by fit_section."""
+    if len(text.encode('utf-8')) <= cap:
+        return text
+    parts = [p for p in re.split(r'(?m)^(?=### (?:RED|NOTE) )', text) if p]
+    sizes = [len(p.encode('utf-8')) for p in parts]
+    shares, left = [0] * len(parts), cap
+    for k, i in enumerate(sorted(range(len(parts)), key=sizes.__getitem__)):
+        shares[i] = min(sizes[i], left // (len(parts) - k))
+        left -= shares[i]
+    return ''.join(fit_section(p, n) for p, n in zip(parts, shares))
+
+
 def join_detail(sections, cap=DETAIL_MAX_BYTES):
-    """Sections joined; over the cap, each keeps an equal share of its own tail."""
+    """Sections joined; over the cap, each keeps an equal share, cut by fit_bytes (failures before tail)."""
     sections = [s for s in sections if s.strip()]
     if not sections:
         return ''
@@ -256,7 +342,7 @@ def join_detail(sections, cap=DETAIL_MAX_BYTES):
     if len(whole.encode('utf-8')) <= cap:
         return whole
     share = cap // len(sections) - 1
-    return '\n'.join(tail_bytes(s, share) for s in sections)
+    return '\n'.join(fit_bytes(s, share) for s in sections)
 
 
 def signature(secret, raw):
@@ -334,7 +420,7 @@ def handoff(env):
     key = env.get('NIKATRU_DETAIL_KEY', '')
     if not key:
         raise Lost('NIKATRU_DETAIL_KEY is not set: the red detail is NOT handed over (it is never cached in plain text)')
-    plain = tail_bytes(text, HANDOFF_MAX_BYTES).encode('utf-8')
+    plain = fit_bytes(text, HANDOFF_MAX_BYTES).encode('utf-8')
     os.makedirs(DETAIL_DIR, exist_ok=True)
     with open(os.path.join(DETAIL_DIR, SEALED_FILE), 'w', encoding='ascii') as f:
         f.write(seal(key, name, plain))
@@ -445,10 +531,10 @@ def build(context, state, env, detail, gate=False):
         'summary': f'{context}: {state} (public run {run_id}, attempt {attempt})'[:SUMMARY_MAX_CHARS],
     }
     if state in ('failure', 'error') and detail.strip():
-        body['detail'] = tail_bytes(detail, DETAIL_MAX_BYTES)
+        body['detail'] = fit_bytes(detail, DETAIL_MAX_BYTES)
     elif state == 'success' and gate and notes_of(detail):
         # ⏱ 2026-10-08 · gitleaks-pr-scoped-r2: a GREEN gate carries its NOTE sections, and only those.
-        body['detail'] = tail_bytes(notes_of(detail), DETAIL_MAX_BYTES)
+        body['detail'] = fit_bytes(notes_of(detail), DETAIL_MAX_BYTES)
     return body
 
 
@@ -617,7 +703,7 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen):
     if not detail.strip():
         print('-- workflow_dispatch run: nothing red and no detail; nothing sent to the private home')
         return 0
-    body = {'run_id': int(env['GITHUB_RUN_ID']), 'run_attempt': int(env['GITHUB_RUN_ATTEMPT']), 'detail': tail_bytes(detail, DETAIL_MAX_BYTES)}
+    body = {'run_id': int(env['GITHUB_RUN_ID']), 'run_attempt': int(env['GITHUB_RUN_ATTEMPT']), 'detail': fit_bytes(detail, DETAIL_MAX_BYTES)}
     status, why = post(url, secret, body, cfg['postTimeoutS'], opener)
     if 200 <= status < 300 or status == 409:
         print(f'ok workflow_dispatch red detail -> HTTP {status} (filed privately{"; already filed for this attempt" if status == 409 else ""})')
