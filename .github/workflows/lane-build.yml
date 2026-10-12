@@ -366,9 +366,9 @@ jobs:
           path: |
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: gradle-android-artifacts-${{ runner.os }}-${{ hashFiles('apps/*/android/**/*.gradle*', 'apps/*/android/gradle/wrapper/gradle-wrapper.properties', 'apps/*/android/gradle.properties') }}
+          key: gradle-android-artifacts-v2-${{ runner.os }}-${{ hashFiles('apps/*/android/**/*.gradle*', 'apps/*/android/gradle/wrapper/gradle-wrapper.properties', 'apps/*/android/gradle.properties') }}
           restore-keys: |
-            gradle-android-artifacts-${{ runner.os }}-
+            gradle-android-artifacts-v2-${{ runner.os }}-
       - name: Turn on Gradle's local build cache for this runner only
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -378,6 +378,16 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Turn on Gradle's cache cleanup (a run of main only, on a key miss, from the saving leg)
+        if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.gradle-cache.outputs.cache-hit != 'true' && matrix.app == fromJSON(needs.prepare.outputs.apps)[0]
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          mkdir -p ~/.gradle/init.d
+          cp tooling/ci/gradle-cache-cleanup.init.gradle ~/.gradle/init.d/
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - uses: ./.github/actions/setup-flutter
       - name: Resolve the workspace
         run: |
@@ -386,7 +396,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Derive the release line from pubspec
         id: ver
         run: |
@@ -395,7 +405,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Transition — the shell's store-key resolver still answers for this app
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -404,7 +414,7 @@ jobs:
           node tooling/ci/store-key-secret.mjs --app ${{ matrix.app }} --rail apple-iap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build android (apk — sideloadable build proof)
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -414,7 +424,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} apk android-play --lane pr
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build android (aab — the Google Play artifact)
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -424,7 +434,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} appbundle android-play --lane pr
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Set the Play .apk aside (Flutter writes every .apk to one path)
         working-directory: apps/${{ matrix.app }}
         run: |
@@ -437,7 +447,7 @@ jobs:
           if [ -f build/app/outputs/flutter-apk/app-release.apk.sha1 ]; then mv build/app/outputs/flutter-apk/app-release.apk.sha1 build/android-play-apk-aside/; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build android (apk — apps.gov.in, its own key, sells on the India rail)
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -447,7 +457,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} apk apps-gov-in --lane pr
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Take the apps.gov.in .apk out, and put the Play .apk back
         id: agi_apk
         working-directory: apps/${{ matrix.app }}
@@ -471,7 +481,7 @@ jobs:
           echo "apk=apps/${APP}/build/apps-gov-in/${file}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -479,7 +489,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform android-artifacts
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every native library is aligned for a 16 KB memory page
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -487,7 +497,7 @@ jobs:
           node --single-threaded tooling/ci/assert-elf-page-alignment.mjs apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Dump the .aab's merged permissions, cross-checked against the Play .apk
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -495,7 +505,7 @@ jobs:
           node tooling/ci/dump-aab-permissions.mjs --aab apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab --apk apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk --out ${{ runner.temp }}/android-permissions.json --run-id ${{ github.run_id }} --commit ${{ env.NIKATRU_SHA }} --artifact ci-android-${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Data safety merged set equals this build's .aab
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -503,7 +513,7 @@ jobs:
           node tooling/ci/assert-play-declarations.mjs --merged-dump ${{ runner.temp }}/android-permissions.json --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The built .apk passes the static apps.gov.in VAPT items
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -511,7 +521,7 @@ jobs:
           node tooling/ci/assert-android-vapt-manifest.mjs apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in .apk passes the static apps.gov.in VAPT items
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -519,7 +529,7 @@ jobs:
           node tooling/ci/assert-android-vapt-manifest.mjs ${{ steps.agi_apk.outputs.apk }} --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in .apk's native libraries are aligned for a 16 KB memory page
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -527,7 +537,7 @@ jobs:
           node --single-threaded tooling/ci/assert-elf-page-alignment.mjs ${{ steps.agi_apk.outputs.apk }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in .apk — its signer against the pin, its minSdk against the form
         id: agi_verify
         run: |
@@ -536,9 +546,19 @@ jobs:
           node tooling/ci/assert-apps-gov-in-apk.mjs --apk ${{ steps.agi_apk.outputs.apk }} --app ${{ matrix.app }} --posture debug
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Save the Gradle caches (a run of main only, on a key miss, from one matrix leg)
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Cut the Gradle caches to what this build can use, and measure them
+        id: gradle-prune
         if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.gradle-cache.outputs.cache-hit != 'true' && matrix.app == fromJSON(needs.prepare.outputs.apps)[0]
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/gradle-cache-prune.mjs --gradle-home "$HOME/.gradle" --wrapper apps/${{ matrix.app }}/android/gradle/wrapper/gradle-wrapper.properties --stop apps/${{ matrix.app }}/android --ceiling-mib 1024
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.android-artifacts.23 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Save the Gradle caches (a run of main only, on a key miss, from one matrix leg, within its ceiling)
+        if: ((env.NIKATRU_REF || (github.event.client_payload.ref || 'refs/heads/main')) == 'refs/heads/main' && contains(fromJSON('["push","schedule","workflow_dispatch"]'), env.NIKATRU_EVENT_NAME || (github.event.client_payload.event || github.event_name)) && !env.NIKATRU_PR) && steps.gradle-cache.outputs.cache-hit != 'true' && matrix.app == fromJSON(needs.prepare.outputs.apps)[0] && steps.gradle-prune.outputs.fits == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: |
