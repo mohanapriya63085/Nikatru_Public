@@ -1122,6 +1122,51 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Every live rail's key, prices and webhook destination still read back as the repo says
+        if: always()
+        timeout-minutes: 3
+        env:
+          PADDLE_API_KEY_READ: ${{ secrets.PADDLE_API_KEY_READ }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/live-rail-config.mjs --rails paddle --while-paywall-off
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=Live rail config is UNKNOWN - it was not read back::A served paywall is ON and a live rail check could not run (PADDLE_API_KEY_READ unset or refused, or the register names no price id). NOTHING is known about what that rail charges or where it sends events, and that is never a pass. The log names each one."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A live rail differs from what the repo says::A live key was refused, a served price differs from services/platform/src/app-config-data.json or is missing at the rail, or the Paddle webhook destination is not the production Worker, inactive or missing an event. The log names the rail and the field: fix the register or the rail the same hour."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Yesterday's live transactions and refunds each match an entitlement event
+        if: always()
+        timeout-minutes: 5
+        env:
+          PADDLE_API_KEY_READ: ${{ secrets.PADDLE_API_KEY_READ }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          # why: --public: this log is the public shell's; ids are printed as short hashes (finding 16).
+          node tooling/ops/money-reconcile.mjs --rails paddle --while-paywall-off --public
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=Yesterday's money is UNRECONCILED - it was not read::A served paywall is ON and a rail or the platform D1 could not be read. Whether every charge granted and every refund revoked is unknown, and that is never a pass. The log names what was not read."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=Yesterday's money does not reconcile::A live charge has no entitlement event (or the reverse), a refund did not revoke, or an amount differs from the register. The log gives counts and ids (no customer data)."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Apple signing certificates and profiles in register.json still match App Store Connect
         if: always()
         timeout-minutes: 3
@@ -1144,7 +1189,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: CLOUDFLARE_READ_TOKEN is minted, and the read steps no longer fall back to the deploy token
         if: ${{ !cancelled() }}
         env:
@@ -1164,7 +1209,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.config-drift.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
