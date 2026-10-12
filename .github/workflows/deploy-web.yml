@@ -726,7 +726,7 @@ jobs:
       - name: Grade the committed status site
         if: steps.live.outputs.go == 'true'
         run: |
-          node tooling/ci/check-site-integrity.mjs . sites/status
+          node tooling/ci/check-site-integrity.mjs . --only sites/status
           node tooling/status/build-status.mjs --check
       - name: Read the surfaces and the live document, and build the site
         if: steps.live.outputs.go == 'true'
