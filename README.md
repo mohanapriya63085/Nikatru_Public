@@ -41,7 +41,7 @@ verdict back to that repository. It is generated: a pull request here is not how
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact
   steps), plus what each workflow reads.
 
-## Workflows (46)
+## Workflows (47)
 
 - `apple-expiry-write.yml`
 - `autopilot-watch.yml`
@@ -78,6 +78,7 @@ verdict back to that repository. It is generated: a pull request here is not how
 - `renovate.yml` — reports `renovate`
 - `review-crawl.yml`
 - `rollback.yml`
+- `status-page.yml`
 - `store-billing.yml`
 - `store-screenshots.yml`
 - `submit-appstore.yml`

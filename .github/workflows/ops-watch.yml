@@ -740,6 +740,7 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+      actions: read
       id-token: write
     steps:
       - name: Check out the private tree (generated)
@@ -804,6 +805,26 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.runner-budget.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The CI repository's Actions cache is under its red line
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ci/assert-cache-budget.mjs --live
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=Actions cache usage is UNKNOWN - nothing was graded::GET /repos/{repo}/actions/cache/usage was not read: no token, or a non-200 (the job token needs actions: read). Unread usage is not usage under the line."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=Actions cache usage is over 8.5 GB::GitHub evicts past 10 GB, and the per-run hand-offs are what go: a CI run whose tests all pass then reds at a hand-off restore. Compare the entries to tooling/cache-budget.json: a family over its ceiling, or a rotated key's old generation. Never delete a hand-off to make room."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.runner-budget.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

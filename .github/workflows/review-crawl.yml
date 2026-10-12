@@ -97,6 +97,7 @@ jobs:
           PHASE: ${{ inputs.phase }}
           MATRIX: ${{ inputs.matrix }}
           LIVE: ${{ inputs.live == false && 'false' || 'true' }}
+          STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -360,7 +361,7 @@ jobs:
         env:
           BASE_HREF: ${{ steps.base.outputs.base_href }}
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
-          TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SITE_KEY: ''
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -377,6 +378,14 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.build-demo.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Fingerprint the heavy assets (content-hashed names, as deployed)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/web/fingerprint-web-build.mjs apps/${{ matrix.app }}/build/web
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.build-demo.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage review-crawl-demo-web-${{ matrix.app }} for this run's later jobs (generated)
         id: nikatru-stage-1
         shell: bash
@@ -537,18 +546,61 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.demo.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Split the cell's review into bundles under the bridge cap
+        if: always()
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/review-crawl-bundles.mjs --in "$RUNNER_TEMP/review-crawl" --out "$RUNNER_TEMP/review-crawl-bundles"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.demo.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store review-crawl-${{ matrix.cell.id }} in the bridge's private home (generated)
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-1
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: warn
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-2 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-2
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-2
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-3 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-3
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-3
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-4 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-4
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-4
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: Keep this run's index as the next run's baseline
+        id: keep
         if: always()
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -558,11 +610,11 @@ jobs:
           # previous facts carried over for every INCOMPLETE route, so a slow route keeps its last
           # complete facts and the rest refresh. A run stopped by live safety is no baseline at all.
           b="$RUNNER_TEMP/review-crawl/baseline.json"
-          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
+          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.demo.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - if: always() && hashFiles(format('{0}/baseline/index.json', runner.temp)) != ''
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.demo.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - if: always() && steps.keep.outputs.saved == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/baseline
@@ -678,18 +730,61 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.public.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Split the cell's review into bundles under the bridge cap
+        if: always()
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/review-crawl-bundles.mjs --in "$RUNNER_TEMP/review-crawl" --out "$RUNNER_TEMP/review-crawl-bundles"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.public.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store review-crawl-${{ matrix.cell.id }} in the bridge's private home (generated)
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-1
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: warn
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-2 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-2
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-2
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-3 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-3
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-3
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-4 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-4
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-4
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: Keep this run's index as the next run's baseline
+        id: keep
         if: always()
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -699,11 +794,11 @@ jobs:
           # previous facts carried over for every INCOMPLETE route, so a slow route keeps its last
           # complete facts and the rest refresh. A run stopped by live safety is no baseline at all.
           b="$RUNNER_TEMP/review-crawl/baseline.json"
-          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
+          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.public.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - if: always() && hashFiles(format('{0}/baseline/index.json', runner.temp)) != ''
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.public.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - if: always() && steps.keep.outputs.saved == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/baseline
@@ -832,18 +927,61 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Split the cell's review into bundles under the bridge cap
+        if: always()
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/review-crawl-bundles.mjs --in "$RUNNER_TEMP/review-crawl" --out "$RUNNER_TEMP/review-crawl-bundles"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store review-crawl-${{ matrix.cell.id }} in the bridge's private home (generated)
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-1
           NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}
           NIKATRU_IF_NO_FILES: warn
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-2 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-2
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-2
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-3 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-3
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-3
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store review-crawl-${{ matrix.cell.id }}-part-4 in the bridge's private home (generated)
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-4
+          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-4
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: Keep this run's index as the next run's baseline
+        id: keep
         if: always()
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -853,11 +991,11 @@ jobs:
           # previous facts carried over for every INCOMPLETE route, so a slow route keeps its last
           # complete facts and the rest refresh. A run stopped by live safety is no baseline at all.
           b="$RUNNER_TEMP/review-crawl/baseline.json"
-          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
+          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - if: always() && hashFiles(format('{0}/baseline/index.json', runner.temp)) != ''
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - if: always() && steps.keep.outputs.saved == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ runner.temp }}/baseline

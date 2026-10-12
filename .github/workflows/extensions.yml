@@ -1085,6 +1085,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name extensions.e2e-branded.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: RED CONTROL — the real copy made to throw fails its clipboard check
+        if: hashFiles(format('extensions/{0}/test/e2e/real-copy.mjs', matrix.suite.dir)) != ''
+        working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
+        env:
+          FS_E2E_CHANNEL: ${{ matrix.channel }}
+          HEADFUL: '1'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          FS_E2E_COPY_THROWS=1 node real-copy.mjs > "$RUNNER_TEMP/real-copy-red.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/real-copy-red.log"
+          echo "real-copy exit: $code"
+          if [ "$code" -ne 1 ]; then echo "::error::real-copy.mjs exited $code with the packed copy made to throw; the red control requires exactly 1"; exit 1; fi
+          if ! grep -qF 'RED CONTROL  FS_E2E_COPY_THROWS=1: unpacked-chromium/pages/common.js' "$RUNNER_TEMP/real-copy-red.log"; then echo "::error::real-copy.mjs exited 1 without packed-lib.mjs applying the red-control delta"; exit 1; fi
+          if ! grep -qF 'FAIL  clicking Copy puts an image/png on the real clipboard' "$RUNNER_TEMP/real-copy-red.log"; then echo "::error::real-copy.mjs exited 1 without its copy check's FAIL line"; exit 1; fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name extensions.e2e-branded.4 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Run every suite that opts into the branded leg (derived, not listed)
         working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
         env:
@@ -1136,7 +1157,7 @@ jobs:
           '
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name extensions.e2e-branded.4 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name extensions.e2e-branded.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
