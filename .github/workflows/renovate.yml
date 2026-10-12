@@ -80,7 +80,7 @@ jobs:
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name renovate.renovate.1 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Run Renovate
         id: renovate
-        uses: renovatebot/github-action@230ce922b08968d0a4f6f70f295601daff09ef1d
+        uses: renovatebot/github-action@f0f41e5f2e706165f6814b1d0f0d0e319de7d1d9
         with:
           token: ${{ steps.renovate-token.outputs.token }}
         env:

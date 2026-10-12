@@ -9,11 +9,11 @@ on:
   workflow_dispatch:
     inputs:
       instant:
-        description: 'Run only this instant (ISO-8601 with a zone, e.g. 2027-11-05T00:00:00Z); empty runs the weekly three'
+        description: 'Run only this instant (ISO-8601 with a zone, e.g. 2027-11-05T00:00:00Z); empty runs the scheduled three'
         type: string
         default: ''
   schedule:
-    - cron: '10 5 * * 6'
+    - cron: '10 5 * * *'
 
 permissions:
   contents: read
