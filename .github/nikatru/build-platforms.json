@@ -41,6 +41,20 @@
       ]
     },
     {
+      "job": "windows_arm64",
+      "context": "build-platforms/windows_arm64",
+      "members": [
+        "build-platforms.windows_arm64."
+      ]
+    },
+    {
+      "job": "linux_arm64",
+      "context": "build-platforms/linux_arm64",
+      "members": [
+        "build-platforms.linux_arm64."
+      ]
+    },
+    {
       "job": "apple",
       "context": "build-platforms/apple",
       "members": [

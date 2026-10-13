@@ -58,7 +58,9 @@
 #                           NIKATRU_RESULTS, so a green re-run clears a red one), then
 #                           the gate's. The bundle arrives as NIKATRU_DETAIL, plain
 #                           data in `env:`; it is unsealed, parsed and checked against
-#                           its own key (known members of this run+attempt, size caps).
+#                           its own key (known members of this run, this attempt or an
+#                           earlier one: a re-run of the report job alone reuses the
+#                           earlier attempt's bundle; size caps).
 #                           A bundle that fails — another key, another run, a hand-off
 #                           moved to another key, altered, malformed — is COVERAGE LOST:
 #                           every status still goes out without detail, and the step
@@ -234,6 +236,18 @@ def member_of(key, prefix):
     rest = key[len(prefix):]
     head, _, index = rest.rpartition('.')
     return head if head and index.isdigit() else None
+
+
+def run_member_of(key, cfg, env):
+    """`<stem>.<job>` of a hand-off key of THIS run, of this attempt or an EARLIER one; None for any other run
+    and for a later attempt. ⏱ 2026-10-13 (transient-reads-retry): re-running only a failed report job starts
+    attempt N+1 but reuses the bundle the attempt-N collect job handed over, whose keys name attempt N, and the
+    send refused its own run's hand-off (run 38267174747 attempt 2: `nikatru-detail-38267174747-1-codeql.analyze.0
+    is not a hand-off of this run and attempt`). Each hand-off stays sealed to its OWN key, attempt included."""
+    m = re.match(r'^' + re.escape(f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-") + r'([1-9][0-9]{0,5})-', key)
+    if m is None or int(m.group(1)) > int(env['GITHUB_RUN_ATTEMPT']):
+        return None
+    return member_of(key, m.group(0))
 
 
 def tail_bytes(text, cap):
@@ -623,15 +637,14 @@ def read_bundle(raw, env, cfg):
         raise Refused(f'not JSON this reporter can read ({type(e).__name__})')
     if not isinstance(bundle, dict) or bundle.get('v') != BUNDLE_VERSION or not isinstance(bundle.get('handoffs'), dict) or not isinstance(bundle.get('unrestored'), list):
         raise Refused(f'not a version-{BUNDLE_VERSION} hand-off bundle')
-    prefix = run_prefix(cfg, env)
     key = env.get('NIKATRU_DETAIL_KEY', '')
     if bundle['handoffs'] and not key:
         raise Refused('NIKATRU_DETAIL_KEY is not set')
     details = {}
     for name, sealed in bundle['handoffs'].items():
-        member = member_of(name, prefix) if re.match(r'^[A-Za-z0-9._-]{1,400}$', name) else None
+        member = run_member_of(name, cfg, env) if re.match(r'^[A-Za-z0-9._-]{1,400}$', name) else None
         if member is None or not isinstance(sealed, str):
-            raise Refused(f'{name[:100]!r} is not a hand-off of this run and attempt')
+            raise Refused(f'{name[:100]!r} is not a hand-off of this run (this attempt or an earlier one)')
         try:
             plain = unseal(key, name, sealed)
         except Refused as e:
@@ -639,7 +652,7 @@ def read_bundle(raw, env, cfg):
         if len(plain) > HANDOFF_MAX_BYTES:
             raise Refused(f'hand-off {name!r} is over the {HANDOFF_MAX_BYTES}-byte cap')
         details.setdefault(member, []).append(plain.decode('utf-8', errors='replace'))
-    unrestored = [member_of(k, prefix) for k in bundle['unrestored'] if isinstance(k, str)]
+    unrestored = [run_member_of(k, cfg, env) for k in bundle['unrestored'] if isinstance(k, str)]
     if None in unrestored or len(unrestored) != len(bundle['unrestored']):
         raise Refused('it names an unrestored hand-off that is not this run\'s')
     # Every job's NOTE sections ride on the gate's detail too: the gate's members are its own job,

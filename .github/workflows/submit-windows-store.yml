@@ -126,11 +126,206 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
 
+  build-arm64:
+    name: Build the arm64 MSIX (${{ needs.gate.outputs.app }})
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    needs: gate
+    permissions:
+      contents: read
+      deployments: read
+      id-token: write
+    outputs:
+      artifact: ${{ steps.arm64-bytes.outputs.artifact }}
+      sha256: ${{ steps.arm64-bytes.outputs.sha256 }}
+      build_number: ${{ steps.buildno.outputs.build_number }}
+    env:
+      APP: ${{ needs.gate.outputs.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-flutter
+        with:
+          cache: 'false'
+      - name: Git may write paths past MAX_PATH
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.build-arm64.3 --default-shell {0}
+        run: |
+          git config --global core.longpaths true
+          git config --global --get core.longpaths
+      - name: Resolve the workspace
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.build-arm64.4 --default-shell {0}
+        run: flutter pub get --enforce-lockfile
+      - name: Derive the release line from pubspec
+        id: ver
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/ci/assert-app-versioning.mjs --emit "apps/${APP}" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.build-arm64.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The store build number lies above the last one the ledger recorded
+        id: buildno
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          recorded="$(node tooling/ci/read-ledger-version-code.mjs --artifact-build-number "${APP}-windows-store")"
+          node tooling/ci/flutter-release-build.mjs --emit-build-number "$APP" windows-store --above "$recorded" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.build-arm64.6 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Build windows
+        env:
+          RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.build-arm64.7 --default-shell {0}
+        run: node tooling/ci/flutter-release-build.mjs "${env:APP}" windows windows-store
+      - name: Stage symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run for this run's later jobs (generated)
+        id: nikatru-stage-1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: apps/${{ needs.gate.outputs.app }}/build/symbols/windows
+          NIKATRU_IF_NO_FILES: error
+        run: node tooling/ci/shell-handoff.mjs stage
+      - name: Hand off symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-stage-1.outputs.has == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/x
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          enableCrossOsArchive: true
+      - name: Install glitchtip-cli (pinned by version AND by digest)
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.build-arm64.9 --default-shell {0}
+        run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
+      - name: Upload the native debug symbols to GlitchTip
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
+          GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.build-arm64.10 --default-shell {0}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $gt = Get-Content -Raw tooling/ops/glitchtip-project.json | ConvertFrom-Json
+          node tooling/ops/upload-native-symbols.mjs `
+            --cli "${env:RUNNER_TEMP}/glitchtip-cli.exe" `
+            --dir "apps/${env:APP}/build/symbols/windows" `
+            --org $gt.org --project $gt.project
+          if ($LASTEXITCODE -ne 0) { Write-Error "upload-native-symbols exited $LASTEXITCODE" }
+      - name: Package MSIX (Microsoft Store, arm64)
+        working-directory: apps/${{ needs.gate.outputs.app }}
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dart run msix:create --version=${{ steps.ver.outputs.release_line }}.${{ steps.buildno.outputs.build_number }}.0 --architecture arm64 --output-name "${APP}-arm64"
+          node ../../tooling/store/msix-visual-name.mjs --app "$APP" "build/windows/msix/${APP}-arm64.msix"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.build-arm64.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The arm64 MSIX carries the identity the register declares
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-artifact-signed-msix.mjs --app "$APP" --arch arm64 "apps/${APP}/build/windows/msix/${APP}-arm64.msix"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.build-arm64.12 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Hand the dry-run job this package's name and sha256
+        id: arm64-bytes
+        shell: bash
+        env:
+          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}-arm64.msix
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          sum="$(sha256sum "$MSIX" | cut -d ' ' -f 1)"
+          echo "artifact=${APP}-windows-store-msix-arm64" >> "$GITHUB_OUTPUT"
+          echo "sha256=${sum}" >> "$GITHUB_OUTPUT"
+          echo "${sum}  ${MSIX}"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.build-arm64.13 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Stage ${{ steps.arm64-bytes.outputs.artifact }} for this run's later jobs (generated)
+        id: nikatru-stage-2
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}-arm64.msix
+          NIKATRU_IF_NO_FILES: error
+        run: node tooling/ci/shell-handoff.mjs stage
+      - name: Hand off ${{ steps.arm64-bytes.outputs.artifact }} to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-stage-2.outputs.has == 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/x
+          key: nikatru-handoff-${{ steps.arm64-bytes.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          enableCrossOsArchive: true
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-submit-windows-store.build-arm64.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
   dry-run:
     name: Validate the submission path (${{ needs.gate.outputs.app }})
     runs-on: windows-2025
     timeout-minutes: 20
-    needs: gate
+    needs: [gate, build-arm64]
     permissions:
       contents: read
       deployments: write
@@ -220,8 +415,27 @@ jobs:
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
         shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.6 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs "${env:APP}" windows windows-store
+      - name: Restore the symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run hand-off (generated)
+        id: nikatru-restore-3
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/x
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Place the symbols-${{ needs.gate.outputs.app }}-windows-store-arm64-dry-run hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: apps/${{ needs.gate.outputs.app }}/build/symbols/windows/arm64
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
       - name: Stage symbols-${{ needs.gate.outputs.app }}-windows-store-dry-run for this run's later jobs (generated)
-        id: nikatru-stage-1
+        id: nikatru-stage-4
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -229,20 +443,20 @@ jobs:
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Hand off symbols-${{ needs.gate.outputs.app }}-windows-store-dry-run to this run's later jobs (generated)
-        if: ${{ (success()) && steps.nikatru-stage-1.outputs.has == 'true' }}
+        if: ${{ (success()) && steps.nikatru-stage-4.outputs.has == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/x
           key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-windows-store-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Install glitchtip-cli (pinned by version AND by digest)
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.8 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.9 --default-shell {0}
         run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
       - name: Upload the native debug symbols to GlitchTip
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.9 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.10 --default-shell {0}
         run: |
           $ErrorActionPreference = 'Stop'
           $gt = Get-Content -Raw tooling/ops/glitchtip-project.json | ConvertFrom-Json
@@ -261,28 +475,93 @@ jobs:
           node ../../tooling/store/msix-visual-name.mjs --app "$APP" "build/windows/msix/${APP}.msix"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The MSIX carries the identity the register declares
         shell: bash
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-artifact-signed-msix.mjs --app "$APP" "apps/${APP}/build/windows/msix/${APP}.msix"
+          node tooling/ci/assert-artifact-signed-msix.mjs --app "$APP" --arch x64 "apps/${APP}/build/windows/msix/${APP}.msix"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.11 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.12 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off (generated)
+        id: nikatru-restore-5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/x
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Place the ${{ needs.build-arm64.outputs.artifact }} hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-restore-5.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_TO: apps/${{ needs.gate.outputs.app }}/build/windows/msix-arm64
+        run: |
+          mkdir -p "$NIKATRU_TO"
+          cp -a .nikatru-handoff/x/. "$NIKATRU_TO/"
+          rm -rf .nikatru-handoff/x
+      - name: The arm64 package is the one its job hashed, at this job's build number
+        shell: bash
+        env:
+          ARM64_SHA256: ${{ needs.build-arm64.outputs.sha256 }}
+          ARM64_BUILD_NUMBER: ${{ needs.build-arm64.outputs.build_number }}
+          BUILD_NUMBER: ${{ steps.buildno.outputs.build_number }}
+          ARM64_MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix-arm64/${{ needs.gate.outputs.app }}-arm64.msix
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if ! printf '%s' "$ARM64_SHA256" | grep -Eqx '[0-9a-f]{64}'; then
+            echo "FAIL the arm64 job's sha256 output is '${ARM64_SHA256}', not 64 hex digits: nothing to check the download against." >&2
+            exit 1
+          fi
+          printf '%s  %s\n' "$ARM64_SHA256" "$ARM64_MSIX" | sha256sum --check --strict -
+          if [ "$ARM64_BUILD_NUMBER" != "$BUILD_NUMBER" ]; then
+            echo "FAIL the arm64 package carries build number '${ARM64_BUILD_NUMBER}' and this job's x64 package '${BUILD_NUMBER}': a bundle holds one version. Re-dispatch." >&2
+            exit 1
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.14 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Bundle the x64 and arm64 packages (makeappx bundle)
+        env:
+          BUNDLE_VERSION: ${{ steps.ver.outputs.release_line }}.${{ steps.buildno.outputs.build_number }}.0
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.15 --default-shell {0}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+          $makeappx = Get-ChildItem -LiteralPath $kits -Directory |
+            Where-Object { $_.Name -match '^10\.\d+\.\d+\.\d+$' } |
+            Sort-Object { [version]$_.Name } -Descending |
+            ForEach-Object { Join-Path $_.FullName 'x64\makeappx.exe' } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if (-not $makeappx) { Write-Error "no x64 makeappx.exe under $kits; the Windows SDK this step bundles with is missing from the image." }
+          Write-Host "makeappx: $makeappx"
+          $stage = Join-Path $env:RUNNER_TEMP 'msix-bundle'
+          if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item -LiteralPath "apps/${env:APP}/build/windows/msix/${env:APP}.msix" -Destination $stage
+          Copy-Item -LiteralPath "apps/${env:APP}/build/windows/msix-arm64/${env:APP}-arm64.msix" -Destination $stage
+          $bundle = Join-Path (Resolve-Path "apps/${env:APP}/build/windows/msix") "${env:APP}.msixbundle"
+          & $makeappx bundle /d $stage /p $bundle /bv $env:BUNDLE_VERSION /o
+          if ($LASTEXITCODE -ne 0) { Write-Error "makeappx bundle exited $LASTEXITCODE" }
       - name: Dry-run the Microsoft Store submission
         env:
           MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
           MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
           MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.12 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.16 --default-shell {0}
         run: node tooling/release/submit-windows-store.mjs --dry-run --app "${env:APP}"
       - name: Name clearance holds for windows-store (owner HELD or PROVEN-FREE)
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.13 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.17 --default-shell {0}
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=windows-store
       - name: Every supported language is translated by the pipeline (windows-store, dry run)
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.14 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.18 --default-shell {0}
         run: node tooling/ci/assert-translations-generated.mjs --for-submission=windows-store
       - name: The app's Partner Center declarations are recorded (--for-submission)
         shell: bash
@@ -292,7 +571,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs --for-submission=windows-store --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.15 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.19 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The Microsoft Store screenshot set covers its declared device types
         shell: bash
         run: |
@@ -301,7 +580,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs --for-submission=windows-store
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.16 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.20 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: A build that cannot sign in is not committed for certification (windows-store)
         shell: bash
         run: |
@@ -310,7 +589,7 @@ jobs:
           node tooling/ci/assert-channel-register.mjs --for-submission=windows-store
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.17 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.21 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Every target this channel ships to has its golden-path legs graded (windows-store)
         shell: bash
         run: |
@@ -319,33 +598,33 @@ jobs:
           node tooling/ci/assert-e2e-legs.mjs --for-submission=windows-store
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.18 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.22 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand the submit job this package's name and sha256
         id: bytes
         shell: bash
         env:
-          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msix
+          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           sum="$(sha256sum "$MSIX" | cut -d ' ' -f 1)"
-          echo "artifact=${APP}-windows-store-msix" >> "$GITHUB_OUTPUT"
+          echo "artifact=${APP}-windows-store-msixbundle" >> "$GITHUB_OUTPUT"
           echo "sha256=${sum}" >> "$GITHUB_OUTPUT"
           echo "${sum}  ${MSIX}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.19 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.23 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Stage ${{ steps.bytes.outputs.artifact }} for this run's later jobs (generated)
-        id: nikatru-stage-2
+        id: nikatru-stage-6
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_PATHS: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msix
+          NIKATRU_PATHS: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
       - name: Hand off ${{ steps.bytes.outputs.artifact }} to this run's later jobs (generated)
-        if: ${{ (success()) && steps.nikatru-stage-2.outputs.has == 'true' }}
+        if: ${{ (success()) && steps.nikatru-stage-6.outputs.has == 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/x
@@ -362,7 +641,7 @@ jobs:
           node tooling/ci/record-deployment.mjs "${APP}-windows-store" --mode dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.21 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.26 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -493,7 +772,7 @@ jobs:
         shell: bash
         run: node tooling/ci/assert-e2e-legs.mjs --for-submission=windows-store
       - name: Restore the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
-        id: nikatru-restore-3
+        id: nikatru-restore-7
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/x
@@ -502,7 +781,7 @@ jobs:
           enableCrossOsArchive: true
           fail-on-cache-miss: true
       - name: Place the ${{ needs.dry-run.outputs.artifact }} hand-off where download-artifact put it (generated)
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -515,7 +794,7 @@ jobs:
         shell: bash
         env:
           EXPECTED_SHA256: ${{ needs.dry-run.outputs.sha256 }}
-          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msix
+          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: |
           set -euo pipefail
           if ! printf '%s' "$EXPECTED_SHA256" | grep -Eqx '[0-9a-f]{64}'; then
@@ -524,7 +803,7 @@ jobs:
           fi
           printf '%s  %s\n' "$EXPECTED_SHA256" "$MSIX" | sha256sum --check --strict -
       - name: Restore the symbols-${{ needs.gate.outputs.app }}-windows-store-dry-run hand-off (generated)
-        id: nikatru-restore-4
+        id: nikatru-restore-8
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/x
@@ -533,7 +812,7 @@ jobs:
           enableCrossOsArchive: true
           fail-on-cache-miss: true
       - name: Place the symbols-${{ needs.gate.outputs.app }}-windows-store-dry-run hand-off where download-artifact put it (generated)
-        if: ${{ (success()) && steps.nikatru-restore-4.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -560,7 +839,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msix
+          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: node tooling/ci/assert-artifact-size.mjs --app "$APP" --channel windows-store "$MSIX"
       - name: Install the Microsoft Store Developer CLI (exact pin from tooling/versions.json)
         shell: pwsh
@@ -597,5 +876,5 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           LISTING_URL: ${{ inputs.listing_url }}
           BUILD_NUMBER: ${{ needs.dry-run.outputs.build_number }}
-          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msix
+          MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state certifying --listing-url "$LISTING_URL" --mode production --artifact "$MSIX" --build-number "$BUILD_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"

@@ -847,8 +847,9 @@ jobs:
   linux-artifacts:
     name: Linux artifacts (built, inspected, discarded)
     if: needs.detect.outputs.affected == 'true'
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 20
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
     permissions:
       contents: read
     needs: [detect, prepare]
@@ -856,6 +857,7 @@ jobs:
       fail-fast: true
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+        arch: [x64, arm64]
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -864,6 +866,7 @@ jobs:
           ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -897,68 +900,54 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-flutter
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 4 || 20 }}
+        with:
+          cache: ${{ matrix.arch == 'arm64' && 'false' || 'true' }}
       - name: Linux build deps
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 3 || 20 }}
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.3 --default-shell {0}
         run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           sudo apt-get update
           sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          flutter pub get --enforce-lockfile
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 2 || 20 }}
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.4 --default-shell {0}
+        run: flutter pub get --enforce-lockfile
       - name: Derive the release line from pubspec
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
         id: ver
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.5 --default-shell {0}
+        run: node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
       - name: Build linux
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 4 || 20 }}
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} linux linux-snap --lane pr
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.6 --default-shell {0}
+        run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} linux linux-snap --lane pr
       - name: Generate the snapcraft recipe
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/release/generate-snapcraft.mjs --app ${{ matrix.app }} --bundle apps/${{ matrix.app }}/build/linux/x64/release/bundle --out "$RUNNER_TEMP/snapcraft-${{ matrix.app }}" --version ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.7 --default-shell {0}
+        run: >
+          node tooling/release/generate-snapcraft.mjs
+          --app ${{ matrix.app }}
+          --bundle apps/${{ matrix.app }}/build/linux/${{ matrix.arch }}/release/bundle
+          --out "$RUNNER_TEMP/snapcraft-${{ matrix.app }}"
+          --version ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}
       - name: The generated recipe is complete and still derived from the tree
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-snapcraft-generable.mjs --emitted "$RUNNER_TEMP/snapcraft-${{ matrix.app }}/snap/snapcraft.yaml" --app ${{ matrix.app }}
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.8 --default-shell {0}
+        run: >
+          node tooling/ci/assert-snapcraft-generable.mjs
+          --emitted "$RUNNER_TEMP/snapcraft-${{ matrix.app }}/snap/snapcraft.yaml"
+          --app ${{ matrix.app }}
       - name: Every artifact this lane claims exists, and is not empty
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform linux-artifacts
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.linux-artifacts.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.linux-artifacts.9 --default-shell {0}
+        run: >
+          node tooling/ci/assert-artifact-shape.mjs
+          --app ${{ matrix.app }} --platform linux-artifacts --arch ${{ matrix.arch }}
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -980,9 +969,143 @@ jobs:
           key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-build.linux-artifacts.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
+  windows-artifacts:
+    name: Windows arm64 artifacts (built, inspected, discarded)
+    if: needs.detect.outputs.affected == 'true'
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+    needs: [detect, prepare]
+    strategy:
+      fail-fast: true
+      matrix:
+        app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+        timeout-minutes: 2
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-flutter
+        timeout-minutes: 8
+        with:
+          cache: 'false'
+      - name: Git may write paths past MAX_PATH
+        timeout-minutes: 1
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.3 --default-shell {0}
+        run: |
+          git config --global core.longpaths true
+          git config --global --get core.longpaths
+      - name: Resolve the workspace
+        timeout-minutes: 4
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.4 --default-shell {0}
+        run: flutter pub get --enforce-lockfile
+      - name: Derive the release line from pubspec
+        timeout-minutes: 1
+        id: ver
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.windows-artifacts.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Build windows
+        timeout-minutes: 8
+        env:
+          RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.6 --default-shell {0}
+        run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
+      - name: Package MSIX (arm64)
+        timeout-minutes: 2
+        working-directory: apps/${{ matrix.app }}
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dart run msix:create --version=${{ steps.ver.outputs.release_line }}.${{ github.run_number }}.0 --architecture arm64 --output-name ${{ matrix.app }}-arm64
+          node ../../tooling/store/msix-visual-name.mjs --app ${{ matrix.app }} build/windows/msix/${{ matrix.app }}-arm64.msix
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.windows-artifacts.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The MSIX carries the identity the register declares, and says arm64
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-artifact-signed-msix.mjs --app ${{ matrix.app }} --arch arm64 apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}-arm64.msix
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.windows-artifacts.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Every artifact this lane claims exists, and is not empty
+        timeout-minutes: 1
+        shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.9 --default-shell {0}
+        run: >
+          node tooling/ci/assert-artifact-shape.mjs
+          --app ${{ matrix.app }} --platform windows --arch arm64
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-build.windows-artifacts.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-build.windows-artifacts.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
   lane-verdict:
     name: lane-verdict
-    needs: [detect, prepare, app-dryrun, android-artifacts, web-artifacts, linux-artifacts]
+    needs: [detect, prepare, app-dryrun, android-artifacts, web-artifacts, linux-artifacts, windows-artifacts]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1035,7 +1158,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/lane-verdict.mjs
+          node tooling/ci/lane-verdict.mjs --lane build
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.lane-verdict.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
