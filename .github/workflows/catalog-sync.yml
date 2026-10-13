@@ -228,6 +228,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Apply the register to every rail, then record the read-backs
+        id: apply
         env:
           GITHUB_TOKEN: ${{ github.token }}
           NIKATRU_ARCHIVE: ${{ inputs.archive }}
@@ -261,6 +262,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Propose the read-backs into main (pull request)
+        if: ${{ !cancelled() && steps.apply.outcome != 'skipped' }}
         env:
           NIKATRU_PROPOSE_PATHS: services/platform/src/app-config-data.json catalog/bundles.json services/platform/src/routes/rail-price-ids.ts
           NIKATRU_PROPOSE_BRANCH: chore/catalog-sync-${{ github.run_id }}
@@ -275,7 +277,7 @@ jobs:
           NIKATRU_PROPOSE_BODY: |
             Rows: none - machine-written read-backs of the store and payment catalogue; the register is graded by ci-gate.
 
-            Written by `catalog-sync.yml` run `${{ github.run_id }}` (`tooling/catalog/sync-products.mjs --apply`, which verified every rail on a fresh read before recording). Deploys: `platform` (rail-price-ids.ts). Merge it once ci-gate is green.
+            Written by `catalog-sync.yml` run `${{ github.run_id }}` (`tooling/catalog/sync-products.mjs --apply`, which records only what a fresh read verified; a leg that failed recorded nothing, and the run's report names it). Deploys: `platform` (rail-price-ids.ts). Merge it once ci-gate is green.
           NIKATRU_PROPOSE_ARTIFACT: proposal-catalog-sync.apply
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
