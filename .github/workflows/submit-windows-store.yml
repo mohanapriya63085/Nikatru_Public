@@ -162,6 +162,48 @@ jobs:
     env:
       APP: ${{ needs.gate.outputs.app }}
     steps:
+      - name: Name the account and ssh the deploy key's ACL needs (generated)
+        id: nikatru-key-account
+        shell: pwsh
+        timeout-minutes: 2
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $PSNativeCommandUseErrorActionPreference = $false
+          $token = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $me = $token.Name
+          & icacls.exe $env:RUNNER_TEMP /inheritance:r /grant:r "*$($token.User.Value):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::icacls could not give RUNNER_TEMP ($env:RUNNER_TEMP) an inheritable ACL for $me, SYSTEM and Administrators only"; exit 1 }
+          Write-Output "RUNNER_TEMP ACL (a new key file inherits it):"
+          & icacls.exe $env:RUNNER_TEMP | Write-Output
+          $domain, $user = $me -split '\\', 2
+          Write-Output "The job runs as $me; USERDOMAIN\USERNAME read ${env:USERDOMAIN}\${env:USERNAME}"
+          $dirs = @(Get-Command ssh -All -CommandType Application -ErrorAction SilentlyContinue | ForEach-Object { Split-Path $_.Source })
+          $git = Get-Command git -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($git) { $dirs += Join-Path (Split-Path (Split-Path $git.Source)) 'usr\bin' }
+          $dirs = @($dirs | Where-Object { Test-Path (Join-Path $_ 'ssh-keygen.exe') } | Select-Object -Unique)
+          $chosen = $null
+          foreach ($dir in $dirs) {
+            $probe = Join-Path $env:RUNNER_TEMP ([guid]::NewGuid().ToString())
+            $keygen = Join-Path $dir 'ssh-keygen.exe'
+            & $keygen -q -t ed25519 -N '' -C nikatru-probe -f "$probe.seed" | Out-Null
+            [IO.File]::WriteAllText($probe, (Get-Content -Raw "$probe.seed").Trim() + "`n")
+            & icacls.exe $probe /grant:r "${domain}\${user}:F" | Out-Null
+            & icacls.exe $probe /inheritance:r | Out-Null
+            $said = (& $keygen -y -f $probe 2>&1 | Out-String).Trim()
+            $loaded = $LASTEXITCODE -eq 0
+            Write-Output "$(Join-Path $dir 'ssh.exe'): $(if ($loaded) { 'loads the key' } else { "refuses the key: $said" })"
+            & icacls.exe $probe | Write-Output
+            Remove-Item -Force -ErrorAction SilentlyContinue $probe, "$probe.seed", "$probe.seed.pub"
+            if ($loaded) { $chosen = $dir; break }
+          }
+          if (-not $chosen) {
+            Write-Output "::error::No ssh on this runner loads a key whose only ACE is $me (searched: $($dirs -join ', ')): the private checkout would fail with bad permissions"
+            exit 1
+          }
+          $path = if ($chosen -eq $dirs[0]) { $env:PATH } else { "$chosen;$env:PATH" }
+          Write-Output "The checkout runs $(Join-Path $chosen 'ssh.exe') with the ACL naming ${domain}\${user}"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "domain=$domain", "user=$user", "path=$path"
+          exit 0
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -169,6 +211,10 @@ jobs:
           ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        env:
+          USERDOMAIN: ${{ steps.nikatru-key-account.outputs.domain }}
+          USERNAME: ${{ steps.nikatru-key-account.outputs.user }}
+          PATH: ${{ steps.nikatru-key-account.outputs.path }}
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
