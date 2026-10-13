@@ -30,6 +30,11 @@ on:
         required: false
         default: false
         type: boolean
+      video:
+        description: 'Also film the promo walkthrough (demo build) and upload each store video as a run artifact promo-video-<variant>-<app>. Publishes nothing.'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -1502,6 +1507,164 @@ jobs:
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
           NIKATRU_ARTIFACT_NAME: report-detail-store-screenshots.capture-ios.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  promo-video:
+    name: Film the promo walkthrough and encode every store's video (demo build)
+    if: ${{ inputs.video }}
+    needs: gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      APP: ${{ needs.gate.outputs.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-flutter
+      - name: Linux build deps and the film tools
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
+            xvfb gnome-keyring dbus-x11 xdotool ffmpeg fonts-dejavu-core
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-screenshots.promo-video.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Enable the Linux desktop target
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter config --enable-linux-desktop
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-screenshots.promo-video.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: flutter pub get
+        working-directory: apps/${{ needs.gate.outputs.app }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          flutter pub get --enforce-lockfile
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-screenshots.promo-video.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Film and encode the promo video
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          dbus-run-session -- bash -c '
+            set -euo pipefail
+            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets)"
+            export GNOME_KEYRING_CONTROL
+            xvfb-run -a -s "-screen 0 2560x1920x24" \
+              node tooling/store/record-promo-video.mjs --app "$APP" --locales en --out "${RUNNER_TEMP}/promo-video"
+          '
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-screenshots.promo-video.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store promo-video-appstore-iphone-886x1920-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/promo-video/en/appstore-iphone-886x1920.mp4
+            ${{ runner.temp }}/promo-video/en/appstore-iphone-886x1920.vtt
+          NIKATRU_ARTIFACT_NAME: promo-video-appstore-iphone-886x1920-${{ needs.gate.outputs.app }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store promo-video-appstore-ipad-1200x1600-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/promo-video/en/appstore-ipad-1200x1600.mp4
+            ${{ runner.temp }}/promo-video/en/appstore-ipad-1200x1600.vtt
+          NIKATRU_ARTIFACT_NAME: promo-video-appstore-ipad-1200x1600-${{ needs.gate.outputs.app }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store promo-video-microsoft-trailer-1920x1080-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/promo-video/en/microsoft-trailer-1920x1080.mp4
+            ${{ runner.temp }}/promo-video/en/microsoft-trailer-1920x1080.vtt
+          NIKATRU_ARTIFACT_NAME: promo-video-microsoft-trailer-1920x1080-${{ needs.gate.outputs.app }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store promo-video-youtube-master-1920x1080-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: |
+            ${{ runner.temp }}/promo-video/en/youtube-master-1920x1080.mp4
+            ${{ runner.temp }}/promo-video/en/youtube-master-1920x1080.vtt
+            ${{ runner.temp }}/promo-video/MANIFEST.json
+          NIKATRU_ARTIFACT_NAME: promo-video-youtube-master-1920x1080-${{ needs.gate.outputs.app }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-store-screenshots.promo-video.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
