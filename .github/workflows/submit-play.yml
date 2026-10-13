@@ -15,21 +15,37 @@ on:
         required: true
         type: string
       confirm:
-        description: 'Type SUBMIT-TO-PLAY to authorise a real upload. Anything else runs the dry run only.'
+        description: 'Type SUBMIT-TO-PLAY to authorise a real upload, or PROMOTE-ON-PLAY to move a production staged rollout (with promote). Anything else runs the dry run only.'
         required: true
         default: 'dry-run-only'
         type: string
       track:
-        description: 'Play track. Default internal. If this app''s API names its internal-testing track `qa`, type qa. `production` is REFUSED unless release_status is draft (ADR 031 class A: staging is not promoting).'
+        description: 'Play track. Default internal. If this app''s API names its internal-testing track `qa`, type qa. `production` is REFUSED unless release_status is draft, or inProgress with rollout_confirm (ADR 031 class A).'
         required: false
         default: 'internal'
         type: string
       release_status:
-        description: 'Release status on that track: completed (served to the track''s testers) or draft (uploaded, not served).'
+        description: 'Release status on that track: completed (served to the track''s testers), draft (uploaded, not served), or inProgress (a staged PRODUCTION rollout to rollout_fraction of users; needs rollout_confirm).'
         required: false
         default: 'completed'
         type: choice
-        options: [completed, draft]
+        options: [completed, draft, inProgress]
+      rollout_fraction:
+        description: 'The fraction of production users a staged rollout starts at, strictly between 0 and 1. Read only when track is production and release_status is inProgress.'
+        required: false
+        default: '0.1'
+        type: string
+      rollout_confirm:
+        description: 'Type ROLLOUT-TO-PRODUCTION to authorise a staged production rollout (release_status inProgress). Ignored otherwise.'
+        required: false
+        default: ''
+        type: string
+      promote:
+        description: 'Move the production staged rollout instead of uploading: 0.5, 1.0 (every user), halt, or resume (a halted rollout, at its own fraction). Needs confirm PROMOTE-ON-PLAY; none does nothing.'
+        required: false
+        default: 'none'
+        type: choice
+        options: ['none', '0.5', '1.0', 'halt', 'resume']
       listing_url:
         description: 'The Play listing URL this submission will be recorded against, e.g. https://play.google.com/store/apps/details?id=<applicationId>. Required for a real upload; ignored by the dry run.'
         required: false
@@ -503,6 +519,11 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: Say that a promote choice beside an upload is ignored
+        if: inputs.promote != 'none'
+        env:
+          PROMOTE: ${{ inputs.promote }}
+        run: echo "::notice title=promote ignored::promote=${PROMOTE} was chosen beside confirm SUBMIT-TO-PLAY. This run only uploads; the staged rollout moves in a SEPARATE dispatch with confirm PROMOTE-ON-PLAY."
       - name: A real submission must name the listing it will be recorded against
         env:
           LISTING_URL: ${{ inputs.listing_url }}
@@ -657,11 +678,14 @@ jobs:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
           PLAY_TRACK: ${{ inputs.track || 'internal' }}
           RELEASE_STATUS: ${{ inputs.release_status }}
+          ROLLOUT_FRACTION: ${{ inputs.rollout_fraction }}
+          ROLLOUT_CONFIRM: ${{ inputs.rollout_confirm }}
           CONFIRM: ${{ inputs.confirm }}
           GITHUB_TOKEN: ${{ github.token }}
         run: >
           node tooling/release/submit-play.mjs --submit --app "$APP"
           --confirm "$CONFIRM" --status "$RELEASE_STATUS"
+          --rollout-fraction "$ROLLOUT_FRACTION" --rollout-confirm "$ROLLOUT_CONFIRM"
       - name: The Play track must carry the bundle this job just uploaded
         env:
           PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
@@ -705,3 +729,118 @@ jobs:
           else
             node tooling/ci/record-deployment.mjs "${APP}-android-play" --state in_review --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production --artifact "$AAB" --build-number "$VERSION_CODE" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
           fi
+
+  promote:
+    name: Move the production staged rollout (owner-approved)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: gate
+    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.promote != 'none' && inputs.confirm == 'PROMOTE-ON-PLAY'
+    environment: store-publish
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      APP: ${{ needs.gate.outputs.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Refuse any ref but main
+        run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: A rollout move must name the listing it will be recorded against
+        env:
+          LISTING_URL: ${{ inputs.listing_url }}
+        run: |
+          set -euo pipefail
+          case "${LISTING_URL}" in
+            https://*) echo "⬜ [10]D-9 the rollout move will be recorded against ${LISTING_URL}" ;;
+            *) echo "FAIL listing_url is '${LISTING_URL}', not an https URL; the [10]D-9 record of this move would have no listing." >&2; exit 1 ;;
+          esac
+      - name: The store service account is still powerless on GCP
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+        run: node tooling/ops/verify-free-api-scope.mjs
+      - name: Move the production staged rollout
+        id: promote
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          PROMOTE: ${{ inputs.promote }}
+          CONFIRM: ${{ inputs.confirm }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$PROMOTE" = halt ]; then
+            node tooling/release/submit-play.mjs --promote --app "$APP" --halt --confirm "$CONFIRM"
+          elif [ "$PROMOTE" = resume ]; then
+            node tooling/release/submit-play.mjs --promote --app "$APP" --resume --confirm "$CONFIRM"
+          else
+            node tooling/release/submit-play.mjs --promote --app "$APP" --to "$PROMOTE" --confirm "$CONFIRM"
+          fi
+      - name: The Play track must still carry the release this job moved
+        env:
+          PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          VERSION_CODE: ${{ steps.promote.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          case "${VERSION_CODE}" in
+            ''|*[!0-9]*)
+              echo "FAIL the move step's version_code is '${VERSION_CODE}', not a positive integer; the release" >&2
+              echo "     this job moved cannot be known, so the probe refuses to guess." >&2
+              exit 1
+              ;;
+          esac
+          APPLICATION_ID="$(node --input-type=module -e '
+          import { readFileSync } from "node:fs";
+          import { readGradleApplicationId } from "./tooling/ci/read-identity.mjs";
+          const rel = "apps/" + process.env.APP + "/android/app/build.gradle.kts";
+          const id = readGradleApplicationId(readFileSync(rel, "utf8"), rel);
+          if (!id.value) { console.error(id.missing ?? id.lost); process.exit(1); }
+          process.stdout.write(id.value);
+          ')"
+          echo "⬜ [14]O-7 reading the Play track state for ${APPLICATION_ID}, expecting versionCode ${VERSION_CODE}"
+          node tooling/ops/post-deploy-smoke.mjs --play-package "${APPLICATION_ID}" --expect "${VERSION_CODE}"
+      - name: Record the rollout move in the [10]D-9 ledger
+        if: always() && steps.promote.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LISTING_URL: ${{ inputs.listing_url }}
+          VERSION_CODE: ${{ steps.promote.outputs.version_code }}
+        run: node tooling/ci/record-deployment.mjs "${APP}-android-play" --state rollout_moved --listing-url "$LISTING_URL" --version-code "$VERSION_CODE" --mode production

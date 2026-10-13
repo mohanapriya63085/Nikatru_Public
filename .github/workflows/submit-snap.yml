@@ -24,6 +24,11 @@ on:
         required: false
         default: ''
         type: string
+      promote_confirm:
+        description: 'Type PROMOTE-SNAP-TO-STABLE to run the promote job (snapcraft promote, latest/candidate to latest/stable). Refused in the same dispatch as an upload. Anything else promotes nothing.'
+        required: false
+        default: ''
+        type: string
   schedule:
     - cron: '0 8 * * 3'
 
@@ -503,6 +508,117 @@ jobs:
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
+
+  promote:
+    name: Promote latest/candidate to latest/stable (owner-approved)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    needs: gate
+    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.promote_confirm == 'PROMOTE-SNAP-TO-STABLE' && inputs.confirm != 'SUBMIT-TO-SNAP-STORE'
+    environment: store-publish
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      APP: ${{ needs.gate.outputs.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Refuse any ref but main
+        run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: Preflight — the Snap Store credential must be present
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SNAPCRAFT_STORE_CREDENTIALS" ]; then
+            echo "::error title=Snap Store promotion cannot run::SNAPCRAFT_STORE_CREDENTIALS is empty in this store-publish job. OWNER STEP: GitHub -> Settings -> Environments -> store-publish -> Environment secrets -> add SNAPCRAFT_STORE_CREDENTIALS (Private/runbooks/store-submission-snap.md). This is a FAILED promotion, not a skipped one."
+            exit 1
+          fi
+          echo "SNAPCRAFT_STORE_CREDENTIALS present — the promotion may proceed."
+      - name: A promotion must name the listing it will be recorded against
+        env:
+          LISTING_URL: ${{ inputs.listing_url }}
+        run: |
+          set -euo pipefail
+          case "${LISTING_URL}" in
+            https://*)
+              echo "⬜ [10]D-9 the promotion will be recorded against ${LISTING_URL}"
+              ;;
+            *)
+              echo "FAIL the \`listing_url\` dispatch input is '${LISTING_URL}', not an https URL, and this job is a REAL promotion." >&2
+              echo "     Re-dispatch with listing_url set, e.g.  https://snapcraft.io/<snap-name>" >&2
+              exit 1
+              ;;
+          esac
+      - name: Name clearance holds for linux-snap (owner HELD or PROVEN-FREE)
+        run: node tooling/ci/assert-name-clearance.mjs --for-submission=linux-snap
+      - name: A build that cannot sign in reaches no public risk (linux-snap)
+        run: node tooling/ci/assert-channel-register.mjs --for-submission=linux-snap --real-submission
+      - name: Install snapcraft for the promotion (the pinned track, held to its floor)
+        run: |
+          set -euo pipefail
+          track="$(node -p "require('./tooling/versions.json').snapcraft_track")"
+          sudo snap install snapcraft --classic --channel "$track"
+          want="$(node -p "require('./tooling/versions.json').snapcraft_version")"
+          got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | head -1)"
+          echo "snapcraft ${got} installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
+          [ -n "$got" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version."; exit 1; }
+          [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | head -1)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json."; exit 1; }
+      - name: Promote latest/candidate to latest/stable
+        id: promote
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PROMOTE_CONFIRM: ${{ inputs.promote_confirm }}
+        run: >
+          node tooling/release/submit-snap.mjs --promote --execute --app "$APP"
+          --confirm "$PROMOTE_CONFIRM"
+      - name: Record the promotion in the [10]D-9 ledger
+        if: always() && steps.promote.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LISTING_URL: ${{ inputs.listing_url }}
+        run: node tooling/ci/record-deployment.mjs "${APP}-linux-snap" --state released --listing-url "$LISTING_URL" --mode production
 
   build-arm64:
     name: Build and pack the arm64 snap (${{ needs.gate.outputs.app }})

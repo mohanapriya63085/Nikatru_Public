@@ -24,6 +24,26 @@ on:
         required: false
         default: ''
         type: string
+      rollout_percentage:
+        description: 'Gradual package rollout for a real submission: the percentage of customers who get the update first, 0 < pct <= 100 (100 = everyone at once). Omitted on the first submission. Raise it later with promote.'
+        required: false
+        default: '10'
+        type: string
+      promote:
+        description: 'Move a rollout already live: 50, 100 (finalize, every customer) or halt. none moves nothing. Without promote_confirm the dry-run job only prints the call.'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - '50'
+          - '100'
+          - halt
+      promote_confirm:
+        description: 'Type ROLLOUT-MICROSOFT-STORE to run the promote job. Refused in the same dispatch as a submission. Anything else moves nothing.'
+        required: false
+        default: ''
+        type: string
   schedule:
     - cron: '0 7 * * 3'
 
@@ -557,11 +577,23 @@ jobs:
           MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
         shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.16 --default-shell {0}
         run: node tooling/release/submit-windows-store.mjs --dry-run --app "${env:APP}"
+      - name: Rehearse the rollout move (prints the call, sends nothing)
+        if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.promote != 'none'
+        shell: bash
+        env:
+          PROMOTE: ${{ inputs.promote }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/release/submit-windows-store.mjs --promote "$PROMOTE" --dry-run --app "$APP"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.17 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Name clearance holds for windows-store (owner HELD or PROVEN-FREE)
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.17 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.18 --default-shell {0}
         run: node tooling/ci/assert-name-clearance.mjs --for-submission=windows-store
       - name: Every supported language is translated by the pipeline (windows-store, dry run)
-        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.18 --default-shell {0}
+        shell: node tooling/ci/quiet-step.mjs --name submit-windows-store.dry-run.19 --default-shell {0}
         run: node tooling/ci/assert-translations-generated.mjs --for-submission=windows-store
       - name: The app's Partner Center declarations are recorded (--for-submission)
         shell: bash
@@ -571,7 +603,7 @@ jobs:
           node tooling/ci/assert-sworn-store-files.mjs --for-submission=windows-store --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.19 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.20 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The Microsoft Store screenshot set covers its declared device types
         shell: bash
         run: |
@@ -580,7 +612,7 @@ jobs:
           node tooling/ci/assert-play-device-coverage.mjs --for-submission=windows-store
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.20 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.21 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: A build that cannot sign in is not committed for certification (windows-store)
         shell: bash
         run: |
@@ -589,7 +621,7 @@ jobs:
           node tooling/ci/assert-channel-register.mjs --for-submission=windows-store
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.21 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.22 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Every target this channel ships to has its golden-path legs graded (windows-store)
         shell: bash
         run: |
@@ -598,7 +630,7 @@ jobs:
           node tooling/ci/assert-e2e-legs.mjs --for-submission=windows-store
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.22 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.23 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand the submit job this package's name and sha256
         id: bytes
         shell: bash
@@ -614,7 +646,7 @@ jobs:
           echo "${sum}  ${MSIX}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.23 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.24 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Stage ${{ steps.bytes.outputs.artifact }} for this run's later jobs (generated)
         id: nikatru-stage-6
         shell: bash
@@ -641,7 +673,7 @@ jobs:
           node tooling/ci/record-deployment.mjs "${APP}-windows-store" --mode dry-run
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.26 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name submit-windows-store.dry-run.27 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -861,12 +893,13 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           CONFIRM: ${{ inputs.confirm }}
+          ROLLOUT_PERCENTAGE: ${{ inputs.rollout_percentage }}
         run: |
           if ($env:GITHUB_ACTIONS -ne 'true' -or [string]::IsNullOrWhiteSpace($env:GITHUB_REPOSITORY)) {
             Write-Error 'FAIL a Microsoft Store submission runs only inside GitHub Actions (GITHUB_ACTIONS=true and GITHUB_REPOSITORY set). The publish gate is the store-publish environment, whose approval exists nowhere else.'
             exit 1
           }
-          node tooling/release/submit-windows-store.mjs --submit --app "${env:APP}" --confirm "$env:CONFIRM"
+          node tooling/release/submit-windows-store.mjs --submit --app "${env:APP}" --confirm "$env:CONFIRM" --rollout-percentage "$env:ROLLOUT_PERCENTAGE"
           exit $LASTEXITCODE
       - name: Record the submission in the [10]D-9 ledger
         if: always() && steps.submit.outcome == 'success'
@@ -878,3 +911,120 @@ jobs:
           BUILD_NUMBER: ${{ needs.dry-run.outputs.build_number }}
           MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state certifying --listing-url "$LISTING_URL" --mode production --artifact "$MSIX" --build-number "$BUILD_NUMBER" --symbols-record "${RUNNER_TEMP}/symbols-record.json"
+
+  promote:
+    name: Move the Microsoft Store package rollout (owner-approved)
+    runs-on: windows-2025
+    timeout-minutes: 15
+    needs: gate
+    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.promote != 'none' && inputs.promote_confirm == 'ROLLOUT-MICROSOFT-STORE' && inputs.confirm != 'SUBMIT-TO-MICROSOFT-STORE'
+    environment: store-publish
+    permissions:
+      contents: read
+      deployments: write
+    env:
+      APP: ${{ needs.gate.outputs.app }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Refuse any ref but main
+        shell: bash
+        run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: Preflight — every Microsoft Store credential must be present
+        shell: bash
+        env:
+          MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
+          MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
+          MS_STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_CLIENT_SECRET }}
+          MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+        run: |
+          set -euo pipefail
+          missing=''
+          if [ -z "$MS_STORE_TENANT_ID" ];     then missing="$missing MS_STORE_TENANT_ID"; fi
+          if [ -z "$MS_STORE_CLIENT_ID" ];     then missing="$missing MS_STORE_CLIENT_ID"; fi
+          if [ -z "$MS_STORE_CLIENT_SECRET" ]; then missing="$missing MS_STORE_CLIENT_SECRET"; fi
+          if [ -z "$MS_STORE_SELLER_ID" ];     then missing="$missing MS_STORE_SELLER_ID"; fi
+          if [ -n "$missing" ]; then
+            echo "::error title=Microsoft Store rollout move cannot run::these secrets are empty in this store-publish job:$missing. OWNER STEP for the client secret: GitHub -> Settings -> Environments -> store-publish -> Environment secrets -> add MS_STORE_CLIENT_SECRET (Private/runbooks/store-submission-windows.md). This is a FAILED move, not a skipped one."
+            exit 1
+          fi
+          echo "all four MS_STORE_* secrets present — the rollout move may proceed."
+      - name: A rollout move must name the listing it will be recorded against
+        shell: bash
+        env:
+          LISTING_URL: ${{ inputs.listing_url }}
+        run: |
+          set -euo pipefail
+          case "${LISTING_URL}" in
+            https://*) echo "⬜ [10]D-9 the rollout move will be recorded against ${LISTING_URL}" ;;
+            *) echo "FAIL the listing_url dispatch input is '${LISTING_URL}', not an https URL; a rollout move is recorded against it. Re-dispatch with listing_url set." >&2; exit 1 ;;
+          esac
+      - name: Install the Microsoft Store Developer CLI (exact pin from tooling/versions.json)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ver = node -p "require('./tooling/versions.json').msstore_cli"
+          if (-not ($ver -match '^\d+\.\d+\.\d+$')) {
+            Write-Error "tooling/versions.json key msstore_cli is '$ver'; an exact three-part version is required."
+          }
+          Write-Host "msstore-cli pin $ver (tooling/versions.json)"
+          winget install --exact --id Microsoft.MSStoreCLI --version $ver --accept-source-agreements --accept-package-agreements --disable-interactivity
+      - name: Move the Microsoft Store package rollout
+        id: promote
+        env:
+          MS_STORE_TENANT_ID: ${{ secrets.MS_STORE_TENANT_ID }}
+          MS_STORE_CLIENT_ID: ${{ secrets.MS_STORE_CLIENT_ID }}
+          MS_STORE_CLIENT_SECRET: ${{ secrets.MS_STORE_CLIENT_SECRET }}
+          MS_STORE_SELLER_ID: ${{ secrets.MS_STORE_SELLER_ID }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PROMOTE: ${{ inputs.promote }}
+          PROMOTE_CONFIRM: ${{ inputs.promote_confirm }}
+        run: |
+          node tooling/release/submit-windows-store.mjs --promote "$env:PROMOTE" --app "${env:APP}" --confirm "$env:PROMOTE_CONFIRM"
+          exit $LASTEXITCODE
+      - name: Record the rollout move in the [10]D-9 ledger
+        if: always() && steps.promote.outcome == 'success'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          LISTING_URL: ${{ inputs.listing_url }}
+        run: node tooling/ci/record-deployment.mjs "${APP}-windows-store" --state rollout_moved --listing-url "$LISTING_URL" --mode production
