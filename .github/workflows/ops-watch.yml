@@ -1469,7 +1469,7 @@ jobs:
     name: Failed-run ledger and guard yield (weekly; red pages the ops-watch issue)
     if: github.event.schedule == '45 7 * * 1' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.failure_ledger)
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     permissions:
       contents: read
       id-token: write
@@ -1549,7 +1549,7 @@ jobs:
           since="$(date -u -d '8 days ago' +%Y-%m-%dT%H:%M:%SZ)"
           if [ -d .cache/triage ]; then find .cache/triage -type f -mtime +8 -delete; fi
           set +e
-          node tooling/ops/triage-failed-runs.mjs --since "$since" --no-prs --branch main --cache-dir .cache/triage --max-requests 600 > "${RUNNER_TEMP}/ledger.txt" 2>&1
+          node tooling/ops/triage-failed-runs.mjs --since "$since" --no-prs --branch main --cache-dir .cache/triage --max-requests 2000 > "${RUNNER_TEMP}/ledger.txt" 2>&1
           code=$?
           set -e
           cat "${RUNNER_TEMP}/ledger.txt"
