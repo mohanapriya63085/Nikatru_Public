@@ -184,7 +184,7 @@ jobs:
           fi
       - uses: ./.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
-      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
         if: steps.plan.outputs.deploy == 'true'
         working-directory: ${{ matrix.worker.dir }}
       - name: Apply the Worker's D1 migrations (before deploy)
@@ -283,7 +283,7 @@ jobs:
         run: node tooling/ci/plan-deploy.mjs platform
       - uses: ./.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
-      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
         if: steps.plan.outputs.deploy == 'true'
         working-directory: services/platform
       - name: The deployed SQL is SQL live D1 will run
@@ -390,7 +390,7 @@ jobs:
         run: node tooling/ci/plan-deploy.mjs edge-shield
       - uses: ./.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
-      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
         if: steps.plan.outputs.deploy == 'true'
         working-directory: services/edge-shield
       - uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0

@@ -22,6 +22,14 @@ on:
         options:
           - skip
           - run
+      sign_in:
+        description: 'token (default): the harness session. form: the phones run the positive leg (--expect-sign-in) — the only proof a nativeAuth flip may cite.'
+        type: choice
+        required: false
+        default: token
+        options:
+          - token
+          - form
 
 concurrency:
   group: native-auth-proof-${{ inputs.app }}
@@ -269,6 +277,7 @@ jobs:
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.android.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The proof — sign in, the gated calls, sign out, the callback
         id: proof
+        if: inputs.sign_in != 'form'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -284,6 +293,22 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.android.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The positive proof — the app's own form signs in, sign-up and recovery admitted
+        id: proof_form
+        if: inputs.sign_in == 'form'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          E2E_EMAIL: ${{ steps.user.outputs.email }}
+          E2E_PASSWORD: ${{ steps.user.outputs.password }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/e2e/native_auth_proof.mjs --app "$APP" --target android --device emulator-5554 --log "$E2E_PROOF_LOG" --callback --sign-in form --expect-sign-in --pending-flows "$PENDING_FLOWS" --notification-tap
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.android.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Purge the throwaway user
         if: always() && steps.user.outcome != 'skipped'
         env:
@@ -294,14 +319,14 @@ jobs:
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
           E2E_APP_ID: ${{ needs.gate.outputs.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
-          E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' }}
+          E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/e2e/purge.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.android.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.android.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -427,6 +452,7 @@ jobs:
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.ios.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The proof — sign in, the gated calls, sign out, the callback
         id: proof
+        if: inputs.sign_in != 'form'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -443,8 +469,25 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.ios.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The positive proof — the app's own form signs in, sign-up and recovery admitted
+        id: proof_form
+        if: inputs.sign_in == 'form'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          E2E_EMAIL: ${{ steps.user.outputs.email }}
+          E2E_PASSWORD: ${{ steps.user.outputs.password }}
+          SIM: ${{ steps.sim.outputs.udid }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          node tooling/e2e/native_auth_proof.mjs --app "$APP" --target ios --device "$SIM" --log "$E2E_PROOF_LOG" --callback --sign-in form --expect-sign-in --pending-flows "$PENDING_FLOWS"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.ios.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store native-auth-proof-ios-after-open in the bridge's private home (generated)
-        if: always() && steps.proof.outcome != 'skipped'
+        if: always() && (steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped')
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -464,14 +507,14 @@ jobs:
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
           E2E_APP_ID: ${{ needs.gate.outputs.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
-          E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' }}
+          E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/e2e/purge.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.ios.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name native-auth-proof.ios.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

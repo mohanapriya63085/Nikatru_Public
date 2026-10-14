@@ -85,7 +85,7 @@ jobs:
       - uses: ./.github/actions/setup-node
       - name: Install the wrangler island
         if: ${{ !inputs.dry_run }}
-        run: npm ci --ignore-scripts --prefix tooling/wrangler
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler
       - name: Re-promote the recorded Pages deployment or Worker version
         id: rollback
         env:

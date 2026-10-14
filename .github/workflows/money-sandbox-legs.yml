@@ -323,7 +323,7 @@ jobs:
       - name: Install the fleet Playwright (lockfile)
         if: needs.plan.outputs.money == 'true'
         working-directory: _playwright
-        run: npm ci --no-audit --no-fund
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
       - name: Open the paywall on the SANDBOX Worker only
         if: needs.plan.outputs.money == 'true'
         env:
@@ -478,7 +478,7 @@ jobs:
       - name: Install the fleet Playwright (lockfile)
         if: needs.plan.outputs.money == 'true'
         working-directory: _playwright
-        run: npm ci --no-audit --no-fund
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
       - name: Open the paywall on the SANDBOX Worker only
         if: needs.plan.outputs.money == 'true'
         env:
@@ -592,7 +592,7 @@ jobs:
       - name: Install the fleet Playwright (lockfile)
         if: needs.plan.outputs.money == 'true'
         working-directory: _playwright
-        run: npm ci --no-audit --no-fund
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
       - name: Open the paywall on the SANDBOX Worker only
         if: needs.plan.outputs.money == 'true'
         env:

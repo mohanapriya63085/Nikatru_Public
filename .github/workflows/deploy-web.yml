@@ -325,7 +325,7 @@ jobs:
           APP: ${{ matrix.app }}
         run: |
           set -uo pipefail
-          npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
           out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$APP" --production-branch=main 2>&1)" && code=0 || code=$?
           printf '%s\n' "$out"
           if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$APP\"."; exit 0; fi
@@ -471,7 +471,7 @@ jobs:
           PROJECT: nikatru-apex
         run: |
           set -uo pipefail
-          npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
           out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$PROJECT" --production-branch=main 2>&1)" && code=0 || code=$?
           printf '%s\n' "$out"
           if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$PROJECT\"."; exit 0; fi
@@ -613,7 +613,7 @@ jobs:
           PROJECT: ${{ steps.site.outputs.project }}
         run: |
           set -uo pipefail
-          npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
           out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$PROJECT" --production-branch=main 2>&1)" && code=0 || code=$?
           printf '%s\n' "$out"
           if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$PROJECT\"."; exit 0; fi

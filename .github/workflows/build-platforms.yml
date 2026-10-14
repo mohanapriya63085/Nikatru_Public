@@ -1040,7 +1040,7 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-flutter
-        timeout-minutes: 10
+        timeout-minutes: 5
         with:
           cache: 'false'
       - name: Git may write paths past MAX_PATH
@@ -1065,7 +1065,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows_arm64.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Build windows
-        timeout-minutes: 10
+        timeout-minutes: 20
         id: build_windows
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}

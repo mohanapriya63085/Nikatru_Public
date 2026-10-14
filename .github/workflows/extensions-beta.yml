@@ -107,7 +107,7 @@ jobs:
           first=''
           while IFS= read -r d; do
             [ -n "$d" ] || continue
-            (cd "$d" && npm ci --no-audit --no-fund)
+            (cd "$d" && node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund)
             [ -n "$first" ] || first="$d"
           done <<< "$DIRS"
           (cd "$first" && npx playwright install chrome-beta)

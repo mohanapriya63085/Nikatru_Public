@@ -197,7 +197,7 @@ jobs:
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
       - uses: ./.github/actions/setup-node
         if: needs.workers.outputs.platform == 'true'
-      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
         if: needs.workers.outputs.platform == 'true'
         working-directory: services/platform
       - name: Apply PLATFORM_DB migrations to the sandbox (before deploy)
@@ -277,7 +277,7 @@ jobs:
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
       - uses: ./.github/actions/setup-node
         if: matrix.worker.worker != 'none'
-      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
         if: matrix.worker.worker != 'none'
         working-directory: ${{ matrix.worker.dir }}
       - name: Apply the Worker's D1 migrations to the sandbox (before deploy)

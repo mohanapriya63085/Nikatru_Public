@@ -758,7 +758,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npm ci --no-audit --no-fund
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.web-artifacts.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1070,7 +1070,7 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-flutter
-        timeout-minutes: 8
+        timeout-minutes: 4
         with:
           cache: 'false'
       - name: Git may write paths past MAX_PATH
@@ -1080,7 +1080,7 @@ jobs:
           git config --global core.longpaths true
           git config --global --get core.longpaths
       - name: Resolve the workspace
-        timeout-minutes: 4
+        timeout-minutes: 2
         shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.4 --default-shell {0}
         run: flutter pub get --enforce-lockfile
       - name: Derive the release line from pubspec
@@ -1095,7 +1095,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.windows-artifacts.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Build windows
-        timeout-minutes: 8
+        timeout-minutes: 14
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
         shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.6 --default-shell {0}

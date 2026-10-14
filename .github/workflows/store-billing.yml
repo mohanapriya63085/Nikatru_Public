@@ -202,7 +202,7 @@ jobs:
       - run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npm ci
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.server.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -330,6 +330,8 @@ jobs:
         app: ${{ fromJSON(needs.generated.outputs.apps) }}
     env:
       APP: ${{ matrix.app }}
+      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
+      STOREKIT_XCODE: '26.4.1'
     permissions:
       contents: read
       id-token: write
@@ -387,6 +389,18 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: StoreKit Testing runs on the pinned Xcode
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          [ -d "$DEVELOPER_DIR" ] || { echo "::error title=StoreKit harness::${DEVELOPER_DIR} is not on this runner, so StoreKit Testing would run on an Xcode whose StoreKitTest fails Code=3 (FB22237318)"; exit 1; }
+          have="$(xcodebuild -version | head -n 1)"
+          [ "$have" = "Xcode ${STOREKIT_XCODE}" ] || { echo "::error title=StoreKit harness::DEVELOPER_DIR selects ${have}, not Xcode ${STOREKIT_XCODE}"; exit 1; }
+          echo "::nikatru-detail::StoreKit Testing on ${have} ($(xcodebuild -version | tail -n 1))"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -411,20 +425,29 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Boot an iPhone simulator
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Boot an iPhone simulator on the runtime that matches the SDK
         id: sim
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          udid="$(xcrun simctl list devices available -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, list] of Object.entries(d)) { if (!/iOS/.test(rt)) continue; const p = list.find((x) => /^iPhone/.test(x.name)); if (p) { console.log(p.udid); process.exit(0); } } process.exit(1);')"
+          sdk="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          xcrun simctl list runtimes | sed 's/^/::nikatru-detail::STOREKIT-DIAG runtimes: /'
+          { ls /Applications | grep Xcode || true; } | sed 's/^/::nikatru-detail::STOREKIT-DIAG Xcodes: /'
+          picked="${RUNNER_TEMP}/pick-simulator.txt"
+          if ! udid="$(xcrun simctl list devices available -j | node tooling/store-billing/pick-simulator.mjs --sdk "$sdk" 2>"$picked")"; then xcrun simctl list runtimes; cat "$picked"; exit 1; fi
+          sed 's/^/::nikatru-detail::STOREKIT-DIAG /' "$picked"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          echo "::nikatru-detail::STOREKIT-DIAG simulator: SDK iphonesimulator${sdk} · $(xcrun simctl list devices | grep -F "$udid" | sed 's/^ *//')"
+          runtime="$(xcrun simctl list devices -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, l] of Object.entries(d)) if (l.some((x) => x.udid === process.argv[1])) console.log(rt.split(".").pop())' "$udid")"
+          [ "$runtime" = "iOS-$(printf '%s' "$sdk" | cut -d. -f1-2 | tr . -)" ] || { echo "::error title=StoreKit harness::SDK iphonesimulator${sdk} does not match the booted runtime ${runtime}"; exit 1; }
+          echo "::nikatru-detail::STOREKIT-DIAG sdk/runtime match: SDK iphonesimulator${sdk} ↔ runtime ${runtime}"
           echo "udid=${udid}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build the simulator app (pods, Generated.xcconfig)
         working-directory: apps/${{ matrix.app }}
         run: |
@@ -433,7 +456,7 @@ jobs:
           flutter build ios --simulator --debug
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Add the one StoreKit harness to RunnerTests
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -441,7 +464,7 @@ jobs:
           cat tooling/store-billing/ios/StoreBillingTests.swift >> "apps/${APP}/ios/RunnerTests/RunnerTests.swift"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Sign the test host for StoreKit Testing (simulator get-task-allow)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -449,7 +472,39 @@ jobs:
           node tooling/store-billing/sim-entitlements.mjs --app "$APP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Build the StoreKit test host (build-for-testing)
+        timeout-minutes: 15
+        env:
+          UDID: ${{ steps.sim.outputs.udid }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          log="${RUNNER_TEMP}/xcodebuild-build.log"
+          code=0
+          xcodebuild build-for-testing \
+            -workspace "apps/${APP}/ios/Runner.xcworkspace" \
+            -scheme Runner \
+            -destination "platform=iOS Simulator,id=${UDID}" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
+            CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=- >"$log" 2>&1 || code=$?
+          [ "$code" -eq 0 ] || { tail -n 200 "$log"; echo "::error title=StoreKit harness::xcodebuild build-for-testing exited ${code}"; exit "$code"; }
+          { grep -E '^(CodeSign|ProcessProductPackaging)' "$log" || true; } | sed 's/^/::nikatru-detail::/'
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The test host carries get-task-allow (codesign -d --entitlements)
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          app="${RUNNER_TEMP}/DerivedData/Build/Products/Debug-iphonesimulator/Runner.app"
+          { codesign -d --entitlements - "$app" 2>&1 || true; } | sed 's/^/::nikatru-detail::codesign: /'
+          node tooling/store-billing/host-entitlements.mjs --app "$app" 2>&1 | sed 's/^/::nikatru-detail::/'
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: xcodebuild test — StoreBillingTests
         id: xctest
         timeout-minutes: 25
@@ -468,6 +523,7 @@ jobs:
             -workspace "apps/${APP}/ios/Runner.xcworkspace" \
             -scheme Runner \
             -destination "platform=iOS Simulator,id=${UDID}" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
             -only-testing:RunnerTests/StoreBillingTests \
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
@@ -482,13 +538,14 @@ jobs:
           wait "$xb" || code=$?
           pkill -P "$dog" 2>/dev/null || true
           kill "$dog" 2>/dev/null || true
+          echo "StoreKit host: $(xcodebuild -version | head -n 1) · simulator $(xcrun simctl list devices | grep -F "$UDID" | sed 's/^ *//') · runtime $(xcrun simctl list devices -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, l] of Object.entries(d)) if (l.some((x) => x.udid === process.argv[1])) console.log(rt.split(".").pop())' "$UDID")"
           grep -E '^(Test Case .*(passed|failed)|Executed [0-9]+ tests?)|error:|WATCHDOG' "$log" | tail -n 80 || true
           [ "$code" -eq 0 ] || { echo "::error title=StoreKit harness::xcodebuild test exited ${code}; the tail of xcodebuild.log follows in the next step"; exit "$code"; }
           out="${RUNNER_TEMP}/storekit-jws-${APP}.json"
           [ -s "$out" ] || { echo "::error title=StoreKit harness::the harness wrote no transaction JWS to ${out}, so the server cannot be shown refusing one"; exit 1; }
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every scenario recorded a transaction, or a skip allowed on this Xcode
         env:
           JWS: ${{ runner.temp }}/storekit-jws-${{ matrix.app }}.json
@@ -499,7 +556,7 @@ jobs:
           node tooling/store-billing/assert-scenarios.mjs --jws "$JWS" --skips "$SKIPS" --xcode "$(xcodebuild -version | head -n 1)"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The tail of xcodebuild.log (red or cancelled run)
         if: always() && (steps.xctest.outcome == 'failure' || steps.xctest.outcome == 'cancelled')
         run: |
@@ -514,7 +571,7 @@ jobs:
           exit 1
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store storekit-xcresult-${{ matrix.app }} in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -532,10 +589,10 @@ jobs:
       - run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npm ci
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
         working-directory: services/platform
       - name: POST every Xcode-signed transaction to /v1/receipts/apple_iap → 403
         working-directory: services/platform
@@ -547,7 +604,7 @@ jobs:
           npx vitest run test/store-billing-apple-local-jws.test.ts
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

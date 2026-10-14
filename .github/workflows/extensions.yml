@@ -237,7 +237,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npm ci
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name extensions.e2e-suite.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1081,7 +1081,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npm ci
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name extensions.e2e-branded.3 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
@@ -1586,7 +1586,7 @@ jobs:
           # why: the linter is the locked island's binary, the same web-ext that signs
           # for AMO, installed from tooling/web-ext/package-lock.json. Never fetched
           # from the registry at run time (O-WEB-EXT-FETCHED-AT-RUN-TIME).
-          npm ci --ignore-scripts --prefix ../tooling/web-ext
+          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix ../tooling/web-ext
           ../tooling/web-ext/node_modules/.bin/web-ext lint --source-dir build/unpacked-firefox --warnings-as-errors
       - name: Checksums
         shell: bash
@@ -1929,7 +1929,7 @@ jobs:
           mkdir -p release-assets/unpacked-firefox
           unzip -q "release-assets/${TOOL}-firefox.zip" -d release-assets/unpacked-firefox
       - name: The AMO signer, from its locked island
-        run: npm ci --ignore-scripts --prefix tooling/web-ext
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/web-ext
       - name: Firefox (AMO) — the listing title is cleared (PROVEN-FREE or HELD)
         if: inputs.confirm == 'SUBMIT-TO-FIREFOX-AMO'
         env:

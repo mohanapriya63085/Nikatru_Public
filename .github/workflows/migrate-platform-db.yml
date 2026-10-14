@@ -83,7 +83,7 @@ jobs:
         run: node tooling/ci/plan-deploy.mjs platform
       - uses: ./.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
-      - run: npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
         if: steps.plan.outputs.deploy == 'true'
         working-directory: services/platform
       - name: Apply PLATFORM_DB migrations (before every deploy that reads it)
