@@ -1466,8 +1466,9 @@ jobs:
 
           good=''
           for run in $runs; do
+            # why: pages of 50, never 100 — GitHub answers HTTP 502 to a 100-job page of a heavy run (tooling/ops/run-jobs.mjs JOB_PAGE_SIZE).
             if ! jobs=$(gh api --paginate \
-                  "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+                  "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=50" \
                   --jq '.jobs[] | ((.conclusion // "null") + " " + .name)'); then
               echo "::error::could not read the jobs of run $run. Its conclusion alone does not say whether the per-tool legs ran, so this fails closed rather than falling back to it."
               exit 1
