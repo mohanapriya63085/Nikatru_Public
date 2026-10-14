@@ -330,8 +330,8 @@ jobs:
         app: ${{ fromJSON(needs.generated.outputs.apps) }}
     env:
       APP: ${{ matrix.app }}
-      DEVELOPER_DIR: /Applications/Xcode_26.4.1.app/Contents/Developer
-      STOREKIT_XCODE: '26.4.1'
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      STOREKIT_XCODE: '26.2'
     permissions:
       contents: read
       id-token: write
