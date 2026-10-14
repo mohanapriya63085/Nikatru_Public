@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Migrate PLATFORM_DB
+name: Part of CI · Migrate PLATFORM_DB
 
 on:
   workflow_call:

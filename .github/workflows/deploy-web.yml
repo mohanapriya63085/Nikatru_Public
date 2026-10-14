@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Deploy web
+name: Part of CI · Deploy web
 
 on:
   workflow_call:

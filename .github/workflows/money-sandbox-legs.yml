@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Money sandbox E2E (unit)
+name: Part of money proof · Sandbox legs
 
 on:
   workflow_call:

@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Lane — apps
+name: Part of CI · Apps lane
 
 on:
   workflow_call:

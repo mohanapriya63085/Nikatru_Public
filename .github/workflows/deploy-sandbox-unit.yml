@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Deploy sandbox (unit)
+name: Part of deploy · Sandbox deploy unit
 
 on:
   workflow_call:

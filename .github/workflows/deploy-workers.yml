@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Deploy workers
+name: Part of CI · Deploy workers
 
 on:
   workflow_call:

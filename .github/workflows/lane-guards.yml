@@ -3,7 +3,7 @@
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
 
-name: Lane — guards
+name: Part of CI · Guards lane
 
 on:
   workflow_call:
