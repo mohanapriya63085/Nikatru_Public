@@ -440,6 +440,7 @@ jobs:
           sed 's/^/::nikatru-detail::STOREKIT-DIAG /' "$picked"
           xcrun simctl boot "$udid"
           xcrun simctl bootstatus "$udid" -b
+          open -a "${DEVELOPER_DIR}/Applications/Simulator.app" --args -CurrentDeviceUDID "$udid"
           echo "::nikatru-detail::STOREKIT-DIAG simulator: SDK iphonesimulator${sdk} · $(xcrun simctl list devices | grep -F "$udid" | sed 's/^ *//')"
           runtime="$(xcrun simctl list devices -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, l] of Object.entries(d)) if (l.some((x) => x.udid === process.argv[1])) console.log(rt.split(".").pop())' "$udid")"
           [ "$runtime" = "iOS-$(printf '%s' "$sdk" | cut -d. -f1-2 | tr . -)" ] || { echo "::error title=StoreKit harness::SDK iphonesimulator${sdk} does not match the booted runtime ${runtime}"; exit 1; }
