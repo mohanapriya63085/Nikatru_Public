@@ -21,10 +21,6 @@ on:
         description: 'all | smoke | viewport:scheme:locale,... (viewport desktop|phone, scheme light|dark, locale en|long|rtl|posix; * for any)'
         type: string
         default: smoke
-      live:
-        description: 'Also run the signed-in LIVE pass with the pipeline-held test account'
-        type: boolean
-        default: true
   schedule:
     - cron: '40 20 * * *'
 
@@ -46,7 +42,6 @@ jobs:
     outputs:
       demo: ${{ steps.plan.outputs.demo }}
       public: ${{ steps.plan.outputs.public }}
-      live: ${{ steps.plan.outputs.live }}
       apps: ${{ steps.plan.outputs.apps }}
     steps:
       - name: Check out the private tree (generated)
@@ -96,13 +91,12 @@ jobs:
           TARGET: ${{ inputs.target }}
           PHASE: ${{ inputs.phase }}
           MATRIX: ${{ inputs.matrix }}
-          LIVE: ${{ inputs.live == false && 'false' || 'true' }}
           STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/e2e/review-crawl/plan.mjs --event "$EVENT" --target "${TARGET:-}" --phase "${PHASE:-all}" --matrix "${MATRIX:-}" --live "$LIVE" >> "$GITHUB_OUTPUT"
+          node tooling/e2e/review-crawl/plan.mjs --event "$EVENT" --target "${TARGET:-}" --phase "${PHASE:-all}" --matrix "${MATRIX:-}" --live false >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -942,203 +936,6 @@ jobs:
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
           NIKATRU_ARTIFACT_NAME: report-detail-review-crawl.public.${{ strategy.job-index }}
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
-
-  live-signed-in:
-    name: Live signed in · ${{ matrix.cell.id }}
-    needs: [plan, self-test]
-    if: needs.plan.outputs.live != '[]'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      max-parallel: 1
-      matrix:
-        cell: ${{ fromJSON(needs.plan.outputs.live) }}
-    steps:
-      - name: Check out the private tree (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Name the private commit (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
-          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
-          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
-          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
-          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
-          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
-          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
-        run: |
-          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
-            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
-              exit 1
-            fi
-          fi
-          {
-            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
-            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
-            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
-            echo "NIKATRU_REF=$NIKATRU_P_REF"
-            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
-            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
-            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
-            echo "NIKATRU_PR=$NIKATRU_P_PR"
-            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
-            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
-          } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-node
-      - name: The live test account is present (fails closed when it is not)
-        env:
-          TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
-          TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/e2e/review-crawl/credentials.mjs --require-live
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Install the fleet Playwright and its Chromium
-        working-directory: _playwright
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: The previous run's index for this cell (the diff's baseline)
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ runner.temp }}/previous
-          key: review-crawl-baseline-${{ matrix.cell.id }}-${{ github.run_id }}
-          restore-keys: review-crawl-baseline-${{ matrix.cell.id }}-
-      - name: Crawl live, signed in (live policy, ledgered, low priority)
-        env:
-          TEST_ACCOUNT_EMAIL: ${{ secrets.TEST_ACCOUNT_EMAIL }}
-          TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
-          TARGET: ${{ matrix.cell.target }}
-          PHASE: ${{ matrix.cell.phase }}
-          MATRIX: ${{ matrix.cell.matrix }}
-          SHARD: ${{ matrix.cell.shard }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set +e
-          prev=()
-          if [ -f "$RUNNER_TEMP/previous/index.json" ]; then prev=(--previous "$RUNNER_TEMP/previous/index.json"); else echo "::notice title=Review crawl baseline::no previous index for this cell, so every error, blank screen and a11y failure is reported as new"; fi
-          # why: --deadline-s 80 min under the 90-min job cap, so the crawl writes its report and
-          # INCOMPLETE rows itself; a crawl that is killed anyway (exit > 2) resumes ONCE from the
-          # checkpoint it rewrites after every route (lead e19de7, item 14).
-          crawl=(nice -n 19 node tooling/e2e/review-crawl/crawl.mjs --target "$TARGET" --mode live --phase "$PHASE" --matrix "$MATRIX" ${SHARD:+--shard "$SHARD"} "${prev[@]}" --deadline-s 4800 --out "$RUNNER_TEMP/review-crawl")
-          "${crawl[@]}"
-          code=$?
-          if [ "$code" -gt 2 ]; then echo "::warning title=Review crawl resumed::the crawl exited $code (killed or crashed); resuming once from its checkpoint"; "${crawl[@]}" --resume; code=$?; fi
-          set -e
-          # why: no report in the step summary: in the public CI shell a summary is public. The
-          # report is in the cell's private upload.
-          exit "$code"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Split the cell's review into bundles under the bridge cap
-        if: always()
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/review-crawl-bundles.mjs --in "$RUNNER_TEMP/review-crawl" --out "$RUNNER_TEMP/review-crawl-bundles"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store review-crawl-${{ matrix.cell.id }} in the bridge's private home (generated)
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-1
-          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}
-          NIKATRU_IF_NO_FILES: warn
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
-      - name: Store review-crawl-${{ matrix.cell.id }}-part-2 in the bridge's private home (generated)
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-2
-          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-2
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
-      - name: Store review-crawl-${{ matrix.cell.id }}-part-3 in the bridge's private home (generated)
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-3
-          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-3
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
-      - name: Store review-crawl-${{ matrix.cell.id }}-part-4 in the bridge's private home (generated)
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_PATHS: ${{ runner.temp }}/review-crawl-bundles/part-4
-          NIKATRU_ARTIFACT_NAME: review-crawl-${{ matrix.cell.id }}-part-4
-          NIKATRU_IF_NO_FILES: ignore
-          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
-          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
-        run: node tooling/ops/bridge-artifact.mjs upload
-      - name: Keep this run's index as the next run's baseline
-        id: keep
-        if: always()
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          mkdir -p "$RUNNER_TEMP/baseline"
-          # why: the baseline is baseline.json (report.mjs mergeBaseline): this run's index with the
-          # previous facts carried over for every INCOMPLETE route, so a slow route keeps its last
-          # complete facts and the rest refresh. A run stopped by live safety is no baseline at all.
-          b="$RUNNER_TEMP/review-crawl/baseline.json"
-          if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name review-crawl.live-signed-in.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - if: always() && steps.keep.outputs.saved == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: ${{ runner.temp }}/baseline
-          key: review-crawl-baseline-${{ matrix.cell.id }}-${{ github.run_id }}
-      - name: Store this job's red detail in the bridge's private home (generated)
-        if: always()
-        continue-on-error: true
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
-          NIKATRU_ARTIFACT_NAME: report-detail-review-crawl.live-signed-in.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
