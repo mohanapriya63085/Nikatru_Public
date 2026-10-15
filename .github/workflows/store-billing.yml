@@ -10,6 +10,11 @@ on:
     - cron: '41 1 * * *'
   workflow_dispatch:
     inputs:
+      only_testing:
+        description: ONE StoreBillingTests method to run alone, e.g. testPurchaseInTheAppWhereASceneIsActive (diagnosis only; empty runs the whole suite).
+        required: false
+        default: ''
+        type: string
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false
@@ -515,17 +520,25 @@ jobs:
           TEST_RUNNER_STOREKIT_SKIPS_OUT: ${{ runner.temp }}/storekit-skips-${{ matrix.app }}.json
           UDID: ${{ steps.sim.outputs.udid }}
           XCODEBUILD_BUDGET_S: '1380'
+          ONLY_TESTING: ${{ inputs.only_testing }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           log="${RUNNER_TEMP}/xcodebuild.log"
+          only="RunnerTests/StoreBillingTests"
+          if [ -n "${ONLY_TESTING:-}" ]; then
+            [[ "$ONLY_TESTING" =~ ^test[A-Za-z0-9_]+$ ]] && grep -qE "^  func ${ONLY_TESTING}\(\) async throws \{" tooling/store-billing/ios/StoreBillingTests.swift \
+              || { echo "::error title=StoreKit harness::only_testing '${ONLY_TESTING}' is not a test method of StoreBillingTests"; exit 1; }
+            only="${only}/${ONLY_TESTING}"
+            echo "::warning title=StoreKit harness::only_testing: running ${only} ALONE (diagnosis; the scenario gates still judge the whole list)"
+          fi
           xcodebuild test \
             -workspace "apps/${APP}/ios/Runner.xcworkspace" \
             -scheme Runner \
             -destination "platform=iOS Simulator,id=${UDID}" \
             -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
-            -only-testing:RunnerTests/StoreBillingTests \
+            "-only-testing:${only}" \
             -parallel-testing-enabled NO \
             -test-timeouts-enabled YES \
             -default-test-execution-time-allowance 120 \
