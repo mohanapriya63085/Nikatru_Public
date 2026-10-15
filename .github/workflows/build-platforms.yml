@@ -737,6 +737,39 @@ jobs:
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store upload-kit-${{ steps.agi_verify.outputs.kit_part_01 }} in the bridge's private home (generated)
+        if: steps.agi_verify.outputs.kit_parts >= 1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_part_01_dir }}
+          NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.kit_part_01 }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store upload-kit-${{ steps.agi_verify.outputs.kit_part_02 }} in the bridge's private home (generated)
+        if: steps.agi_verify.outputs.kit_parts >= 2
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_part_02_dir }}
+          NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.kit_part_02 }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+      - name: Store upload-kit-${{ steps.agi_verify.outputs.kit_part_03 }} in the bridge's private home (generated)
+        if: steps.agi_verify.outputs.kit_parts >= 3
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ steps.agi_verify.outputs.kit_part_03_dir }}
+          NIKATRU_ARTIFACT_NAME: upload-kit-${{ steps.agi_verify.outputs.kit_part_03 }}
+          NIKATRU_IF_NO_FILES: error
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
