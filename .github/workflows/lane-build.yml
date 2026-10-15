@@ -1070,7 +1070,7 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-flutter
-        timeout-minutes: 4
+        timeout-minutes: 6
         with:
           cache: 'false'
       - name: Git may write paths past MAX_PATH
@@ -1082,7 +1082,13 @@ jobs:
       - name: Resolve the workspace
         timeout-minutes: 2
         shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.4 --default-shell {0}
-        run: flutter pub get --enforce-lockfile
+        run: |
+          flutter pub get --enforce-lockfile
+          if ($LASTEXITCODE -eq -1073741819 -or $LASTEXITCODE -eq 3221225477) {
+            Write-Output "::nikatru-detail::flutter pub get --enforce-lockfile exited $LASTEXITCODE (0xC0000005, an access violation, not a resolution failure); retrying once"
+            flutter pub get --enforce-lockfile
+          }
+          exit $LASTEXITCODE
       - name: Derive the release line from pubspec
         timeout-minutes: 1
         id: ver
@@ -1101,7 +1107,7 @@ jobs:
         shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.6 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
       - name: Package MSIX (arm64)
-        timeout-minutes: 2
+        timeout-minutes: 1
         working-directory: apps/${{ matrix.app }}
         shell: bash
         run: |
@@ -1112,22 +1118,17 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.windows-artifacts.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
-      - name: The MSIX carries the identity the register declares, and says arm64
+      - name: The MSIX carries the identity the register declares and says arm64, and every artifact this lane claims exists
         timeout-minutes: 1
         shell: bash
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           node tooling/ci/assert-artifact-signed-msix.mjs --app ${{ matrix.app }} --arch arm64 apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}-arm64.msix
+          node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform windows --arch arm64
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name lane-build.windows-artifacts.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
-      - name: Every artifact this lane claims exists, and is not empty
-        timeout-minutes: 1
-        shell: node tooling/ci/quiet-step.mjs --name lane-build.windows-artifacts.9 --default-shell {0}
-        run: >
-          node tooling/ci/assert-artifact-shape.mjs
-          --app ${{ matrix.app }} --platform windows --arch arm64
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
