@@ -425,6 +425,25 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.status.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The two pages a sale sends a buyer to are served and can open the checkout
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          node tooling/ops/checkout-pages-live.mjs
+          code=$?
+          set -e
+          if [ "$code" -eq 2 ]; then
+            echo "::error title=The checkout pages are UNKNOWN - they were not judged::The tree's checkout links could not be read, or nikatru.com did not answer 200/404 through every retry. NOTHING about the checkout pages is known from this run, and that is never a pass. The step log names the URL."
+          elif [ "$code" -eq 1 ]; then
+            echo "::error title=A checkout page cannot open the checkout::A page a sale sends the buyer to (Paddle's default payment link, or /checkout/ for Razorpay) is missing, lost its launcher, or carries an unfilled or test provider value. The step log names the page. Redeploy the site (deploy-web.yml site job) with PADDLE_CLIENT_TOKEN_LIVE and RAZORPAY_LIVE_KEY_ID set."
+          fi
+          exit "$code"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name ops-watch.status.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

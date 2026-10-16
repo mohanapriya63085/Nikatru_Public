@@ -458,6 +458,12 @@ jobs:
           cp -R sites/nikatru/. build/nikatru-apex/
           printf '{"sha":"%s","build_number":%s}\n' "$NIKATRU_SHA" "$RUN_NUMBER" > build/nikatru-apex/version.json
           cat build/nikatru-apex/version.json
+      - name: Fill the checkout pages' provider values into the staged copy
+        if: steps.plan.outputs.deploy == 'true'
+        env:
+          PADDLE_CLIENT_TOKEN_LIVE: ${{ vars.PADDLE_CLIENT_TOKEN_LIVE }}
+          RAZORPAY_LIVE_KEY_ID: ${{ vars.RAZORPAY_LIVE_KEY_ID }}
+        run: node tooling/sites/fill-checkout-config.mjs --out build/nikatru-apex --mode live
       - name: Grade the bindings, then write the filled config into the staged copy
         if: steps.plan.outputs.deploy == 'true'
         env:
