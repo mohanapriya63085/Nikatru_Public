@@ -323,6 +323,7 @@ jobs:
             --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
             --dart-define=API_BASE_URL="$API_BASE_URL" \
             --dart-define=APP_VERSION="$NUJ_APP_VERSION" \
+            --dart-define=RELEASE_CHANNEL=web \
             --dart-define=TURNSTILE_SITE_KEY="$TURNSTILE_SITE_KEY" \
             --dart-define=E2E_NUJ_N="$NUJ_N" \
             --dart-define=E2E_NUJ_DATE="$E2E_NUJ_DATE" \
@@ -771,6 +772,7 @@ jobs:
             --dart-define=CONFIG_BASE_URL="$WORKER_URL" \
             --dart-define=PIN_BACKEND_HOSTS=true \
             --dart-define=APP_VERSION="$NUJ_APP_VERSION" \
+            --dart-define=RELEASE_CHANNEL=web \
             --dart-define=E2E_NUJ_TARGET=ephemeral \
             --dart-define=E2E_NUJ_N="$NUJ_N" \
             --dart-define=E2E_NUJ_DATE="$E2E_NUJ_DATE" \
