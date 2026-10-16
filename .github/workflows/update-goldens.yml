@@ -97,7 +97,7 @@ jobs:
             echo "::error title=Refused::ref is main. Goldens land on a branch and reach main through a pull request and ci-gate."
             exit 1
           fi
-          if ! printf '%s' "$REF" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' || ! git check-ref-format --branch "$REF" > /dev/null; then
+          if ! grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*$' <<<"$REF" || ! git check-ref-format --branch "$REF" > /dev/null; then
             echo "::error title=Refused::ref '$REF' is not a plain branch name."
             exit 1
           fi
@@ -155,7 +155,7 @@ jobs:
           fi
           : > "$RUNNER_TEMP/plan.tsv"
           for t in "${tests[@]}"; do
-            if ! printf '%s' "$t" | grep -Eq '^(apps|packages)/[a-z][a-z0-9_]*/test/([A-Za-z0-9_]+/)*[A-Za-z0-9_]+_test\.dart$'; then
+            if ! grep -Eq '^(apps|packages)/[a-z][a-z0-9_]*/test/([A-Za-z0-9_]+/)*[A-Za-z0-9_]+_test\.dart$' <<<"$t"; then
               echo "::error title=Refused::'$t' is not apps/<id>/test/..._test.dart or packages/<name>/test/..._test.dart."
               exit 1
             fi
@@ -244,7 +244,7 @@ jobs:
               while IFS= read -r pkg; do
                 case "$f" in
                   "$pkg"/test/*goldens/*.png)
-                    if printf '%s' "${f#"$pkg"/test/}" | grep -Eq '^([A-Za-z0-9_]+/)*goldens/[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*\.png$'; then ok=1; fi ;;
+                    if grep -Eq '^([A-Za-z0-9_]+/)*goldens/[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*\.png$' <<<"${f#"$pkg"/test/}"; then ok=1; fi ;;
                 esac
               done < "$RUNNER_TEMP/packages.txt"
             fi

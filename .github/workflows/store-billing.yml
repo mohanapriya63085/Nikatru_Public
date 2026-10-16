@@ -400,7 +400,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           [ -d "$DEVELOPER_DIR" ] || { echo "::error title=StoreKit harness::${DEVELOPER_DIR} is not on this runner, so StoreKit Testing would run on an Xcode whose StoreKitTest fails Code=3 (FB22237318)"; exit 1; }
-          have="$(xcodebuild -version | head -n 1)"
+          have="$(xcodebuild -version | sed -n 1p)"
           [ "$have" = "Xcode ${STOREKIT_XCODE}" ] || { echo "::error title=StoreKit harness::DEVELOPER_DIR selects ${have}, not Xcode ${STOREKIT_XCODE}"; exit 1; }
           echo "::nikatru-detail::StoreKit Testing on ${have} ($(xcodebuild -version | tail -n 1))"
           NIKATRU_QUIET_EOF
@@ -552,7 +552,7 @@ jobs:
           wait "$xb" || code=$?
           pkill -P "$dog" 2>/dev/null || true
           kill "$dog" 2>/dev/null || true
-          echo "StoreKit host: $(xcodebuild -version | head -n 1) · simulator $(xcrun simctl list devices | grep -F "$UDID" | sed 's/^ *//') · runtime $(xcrun simctl list devices -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, l] of Object.entries(d)) if (l.some((x) => x.udid === process.argv[1])) console.log(rt.split(".").pop())' "$UDID")"
+          echo "StoreKit host: $(xcodebuild -version | sed -n 1p) · simulator $(xcrun simctl list devices | grep -F "$UDID" | sed 's/^ *//') · runtime $(xcrun simctl list devices -j | node -e 'const d = JSON.parse(require("fs").readFileSync(0, "utf8")).devices; for (const [rt, l] of Object.entries(d)) if (l.some((x) => x.udid === process.argv[1])) console.log(rt.split(".").pop())' "$UDID")"
           grep -E '^(Test Case .*(passed|failed)|Executed [0-9]+ tests?)|error:|WATCHDOG' "$log" | tail -n 80 || true
           [ "$code" -eq 0 ] || { echo "::error title=StoreKit harness::xcodebuild test exited ${code}; the tail of xcodebuild.log follows in the next step"; exit "$code"; }
           out="${RUNNER_TEMP}/storekit-jws-${APP}.json"
@@ -567,7 +567,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/store-billing/assert-scenarios.mjs --jws "$JWS" --skips "$SKIPS" --xcode "$(xcodebuild -version | head -n 1)"
+          node tooling/store-billing/assert-scenarios.mjs --jws "$JWS" --skips "$SKIPS" --xcode "$(xcodebuild -version | sed -n 1p)"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name store-billing.storekit.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

@@ -240,7 +240,7 @@ jobs:
           yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
           echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n proof -k "$image" --device pixel_6
-          "$sdk/emulator/emulator" -list-avds | grep -qx proof || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
+          "$sdk/emulator/emulator" -list-avds | awk '$0 == "proof" { hit = 1 } END { exit !hit }' || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
           nohup "$sdk/emulator/emulator" -avd proof -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -accel on > "$emu_log" 2>&1 &
           emu_pid=$!
@@ -1115,7 +1115,7 @@ jobs:
           yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
           echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n proof -k "$image" --device pixel_6
-          "$sdk/emulator/emulator" -list-avds | grep -qx proof || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
+          "$sdk/emulator/emulator" -list-avds | awk '$0 == "proof" { hit = 1 } END { exit !hit }' || why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
           nohup "$sdk/emulator/emulator" -avd proof -no-window -no-audio -no-boot-anim -no-snapshot \
             -gpu swiftshader_indirect -accel on > "$emu_log" 2>&1 &
           emu_pid=$!

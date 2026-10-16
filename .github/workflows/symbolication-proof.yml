@@ -293,7 +293,7 @@ jobs:
           yes | "$sdk/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
           timeout 600 "$sdk/cmdline-tools/latest/bin/sdkmanager" --install emulator platform-tools "$image" > /dev/null
           echo no | "$sdk/cmdline-tools/latest/bin/avdmanager" create avd --force -n probe -k "$image" --device pixel_6
-          if ! "$sdk/emulator/emulator" -list-avds | grep -qx probe; then
+          if ! "$sdk/emulator/emulator" -list-avds | awk '$0 == "probe" { hit = 1 } END { exit !hit }'; then
             ls -la "$ANDROID_AVD_HOME" "$HOME/.android/avd" "${XDG_CONFIG_HOME:-$HOME/.config}/.android/avd" 2>&1 || true
             why "avdmanager created no AVD the emulator can see in ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
           fi
@@ -341,7 +341,7 @@ jobs:
             exit 1
           }
           timeout 120 "$adb" install -r "apps/${APP}/build/app/outputs/flutter-apk/app-release.apk"
-          "$adb" shell pm path "$pkg" | grep -q '^package:' || probe_why "INSTALLED: pm has no path for $pkg after install"
+          "$adb" shell pm path "$pkg" | awk '/^package:/ { hit = 1 } END { exit !hit }' || probe_why "INSTALLED: pm has no path for $pkg after install"
           echo "phase ok: installed"
           "$adb" logcat -c
           timeout 120 "$adb" shell am start -W -n "$pkg/.MainActivity"
@@ -394,7 +394,7 @@ jobs:
           set -euo pipefail
           out="${RUNNER_TEMP}/logcat.txt"
           bundle="apps/${APP}/build/linux/x64/release/bundle"
-          bin="$(find "$bundle" -maxdepth 1 -type f -perm -u+x | head -n 1)"
+          bin="$(find "$bundle" -maxdepth 1 -type f -perm -u+x | sed -n 1p)"
           if [ -z "$bin" ]; then
             ls -la "$bundle" || true
             echo "::error title=Probe::no executable in ${bundle}"

@@ -314,11 +314,11 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if ! convert -list format 2>/dev/null | grep -qE '^ *WEBP'; then
+          if ! convert -list format 2>/dev/null | awk '/^ *WEBP/ { hit = 1 } END { exit !hit }'; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq imagemagick libmagickcore-6.q16-7-extra
           fi
-          convert -version | head -1
+          convert -version | sed -n 1p
           node tooling/sites/derive-site-shots.mjs > "${RUNNER_TEMP}/site-shots.txt"
           cat "${RUNNER_TEMP}/site-shots.txt"
           echo "paths=$(tr '\n' ' ' < "${RUNNER_TEMP}/site-shots.txt")" >> "$GITHUB_OUTPUT"

@@ -615,7 +615,7 @@ jobs:
           AAB: apps/${{ needs.gate.outputs.app }}/build/app/outputs/bundle/release/app-release.aab
         run: |
           set -euo pipefail
-          if ! printf '%s' "$EXPECTED_SHA256" | grep -Eqx '[0-9a-f]{64}'; then
+          if ! grep -Eqx '[0-9a-f]{64}' <<<"$EXPECTED_SHA256"; then
             echo "FAIL the dry-run job's sha256 output is '${EXPECTED_SHA256}', not 64 hex digits: nothing to check the download against." >&2
             exit 1
           fi

@@ -1399,10 +1399,10 @@ jobs:
           echo "snapcraft track ${track} (tooling/versions.json snapcraft_track)"
           sudo snap install snapcraft --classic --channel "$track"
           want="$(node -p "require('./tooling/versions.json').snapcraft_version")"
-          got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | head -1)"
+          got="$(snapcraft --version | sed -n 's/^snapcraft[[:space:]]*//p' | sed -n 1p)"
           echo "snapcraft ${got} installed from ${track}; floor ${want} (tooling/versions.json snapcraft_version)"
           [ -n "$got" ] || { echo "::error title=snapcraft pin::could not read the installed snapcraft version."; exit 1; }
-          [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | head -1)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
+          [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1736,7 +1736,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          app="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -1)"
+          app="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | sed -n 1p)"
           if [ -z "$app" ]; then
             echo "::error title=pkg::no .app in build/macos/Build/Products/Release to package"
             exit 1

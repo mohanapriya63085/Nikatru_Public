@@ -364,7 +364,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          app="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | head -1)"
+          app="$(find build/macos/Build/Products/Release -maxdepth 1 -name '*.app' | sed -n 1p)"
           if [ -z "$app" ]; then
             echo "::error title=pkg::no .app in build/macos/Build/Products/Release to package"
             exit 1
@@ -599,8 +599,8 @@ jobs:
           set -euo pipefail
           work="$(mktemp -d)"
           unzip -q -o "apps/${APP}/build/ios/ipa/${APP}.ipa" 'Payload/*.app/Info.plist' -d "$work"
-          ios_plist="$(find "$work/Payload" -maxdepth 2 -name Info.plist | head -1)"
-          mac_app="$(find "apps/${APP}/build/macos/Build/Products/Release" -maxdepth 1 -name '*.app' | head -1)"
+          ios_plist="$(find "$work/Payload" -maxdepth 2 -name Info.plist | sed -n 1p)"
+          mac_app="$(find "apps/${APP}/build/macos/Build/Products/Release" -maxdepth 1 -name '*.app' | sed -n 1p)"
           [ -n "$ios_plist" ] && [ -n "$mac_app" ] || { echo "::error title=versions::no iOS Info.plist in the .ipa, or no macOS .app"; exit 1; }
           key() { plutil -extract "$1" raw -o - "$2"; }
           ios_short="$(key CFBundleShortVersionString "$ios_plist")"
@@ -627,7 +627,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          ipa="$(find "$IPA_DIR" -maxdepth 1 -name '*.ipa' | head -1)"
+          ipa="$(find "$IPA_DIR" -maxdepth 1 -name '*.ipa' | sed -n 1p)"
           pkg="${PKG_DIR}/${APP}.pkg"
           [ -s "$ipa" ] && [ -s "$pkg" ] || { echo "::error title=Apple hand-off::the .ipa or the .pkg is missing or empty"; exit 1; }
           ipa_sum="$(shasum -a 256 "$ipa" | cut -d ' ' -f 1)"
@@ -857,7 +857,7 @@ jobs:
           set -euo pipefail
           if ! command -v sha256sum >/dev/null 2>&1; then sha256sum() { shasum -a 256 "$@"; }; fi
           for sum in "$IPA_SHA256" "$PKG_SHA256"; do
-            if ! printf '%s' "$sum" | grep -Eqx '[0-9a-f]{64}'; then
+            if ! grep -Eqx '[0-9a-f]{64}' <<<"$sum"; then
               echo "FAIL a dry-run sha256 output is '${sum}', not 64 hex digits: nothing to check the download against." >&2
               exit 1
             fi

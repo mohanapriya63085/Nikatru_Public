@@ -581,7 +581,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if ! printf '%s' "$ARM64_SHA256" | grep -Eqx '[0-9a-f]{64}'; then
+          if ! grep -Eqx '[0-9a-f]{64}' <<<"$ARM64_SHA256"; then
             echo "FAIL the arm64 job's sha256 output is '${ARM64_SHA256}', not 64 hex digits: nothing to check the download against." >&2
             exit 1
           fi
@@ -875,7 +875,7 @@ jobs:
           MSIX: apps/${{ needs.gate.outputs.app }}/build/windows/msix/${{ needs.gate.outputs.app }}.msixbundle
         run: |
           set -euo pipefail
-          if ! printf '%s' "$EXPECTED_SHA256" | grep -Eqx '[0-9a-f]{64}'; then
+          if ! grep -Eqx '[0-9a-f]{64}' <<<"$EXPECTED_SHA256"; then
             echo "FAIL the dry-run job's sha256 output is '${EXPECTED_SHA256}', not 64 hex digits: nothing to check the download against." >&2
             exit 1
           fi

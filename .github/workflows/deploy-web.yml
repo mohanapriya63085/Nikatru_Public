@@ -257,7 +257,7 @@ jobs:
         run: |
           set -euo pipefail
           server="$(printf '%s' "$GLITCHTIP_DSN" | sed -E 's#^(https?)://[^@/]+@([^/]+)/.*$#\1://\2#')"
-          if ! printf '%s' "$server" | grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]+)?$'; then
+          if ! grep -Eq '^https?://[A-Za-z0-9.-]+(:[0-9]+)?$' <<<"$server"; then
             echo "::error title=source maps::GLITCHTIP_DSN did not parse into a server origin. Expected https://<key>@<host>/<project id>."
             exit 1
           fi
@@ -329,7 +329,7 @@ jobs:
           out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$APP" --production-branch=main 2>&1)" && code=0 || code=$?
           printf '%s\n' "$out"
           if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$APP\"."; exit 0; fi
-          if printf '%s' "$out" | grep -qiE 'already exists|\b8000002\b'; then echo "Pages project \"$APP\" already exists — nothing to create."; exit 0; fi
+          if grep -qiE 'already exists|\b8000002\b' <<<"$out"; then echo "Pages project \"$APP\" already exists — nothing to create."; exit 0; fi
           echo "::error title=Pages project::could not ensure the Direct Upload Pages project \"$APP\" exists (wrangler exit ${code})."
           exit 1
       - name: Prove app.yaml's pagesOrigin is the Pages project's own subdomain
@@ -475,7 +475,7 @@ jobs:
           out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$PROJECT" --production-branch=main 2>&1)" && code=0 || code=$?
           printf '%s\n' "$out"
           if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$PROJECT\"."; exit 0; fi
-          if printf '%s' "$out" | grep -qiE 'already exists|\b8000002\b'; then echo "Pages project \"$PROJECT\" already exists — nothing to create."; exit 0; fi
+          if grep -qiE 'already exists|\b8000002\b' <<<"$out"; then echo "Pages project \"$PROJECT\" already exists — nothing to create."; exit 0; fi
           echo "::error title=Pages project::could not ensure the Direct Upload Pages project \"$PROJECT\" exists (wrangler exit ${code})."
           exit 1
       - name: Put the rate-limit salt on the project
@@ -617,7 +617,7 @@ jobs:
           out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$PROJECT" --production-branch=main 2>&1)" && code=0 || code=$?
           printf '%s\n' "$out"
           if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$PROJECT\"."; exit 0; fi
-          if printf '%s' "$out" | grep -qiE 'already exists|\b8000002\b'; then echo "Pages project \"$PROJECT\" already exists — nothing to create."; exit 0; fi
+          if grep -qiE 'already exists|\b8000002\b' <<<"$out"; then echo "Pages project \"$PROJECT\" already exists — nothing to create."; exit 0; fi
           echo "::error title=Pages project::could not ensure the Direct Upload Pages project \"$PROJECT\" exists (wrangler exit ${code})."
           exit 1
       - name: Read the project's issued origin, and whether the public host is on it yet
