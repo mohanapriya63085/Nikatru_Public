@@ -47,9 +47,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -65,7 +65,33 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-node
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Re-derive every declared app's clearance record
         id: sweep
         run: |
@@ -83,7 +109,7 @@ jobs:
           echo "sweep exit: ${code}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name name-clearance.sweep.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name name-clearance.sweep.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Decide what the sweep proposes
         id: decide
         env:
@@ -173,7 +199,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name name-clearance.sweep.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name name-clearance.sweep.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Propose the records by pull request
         if: steps.decide.outputs.propose == 'true'
         env:
@@ -197,7 +223,7 @@ jobs:
           node tooling/ops/bridge-propose.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name name-clearance.sweep.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name name-clearance.sweep.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A flipped verdict is an owner decision
         if: steps.decide.outputs.propose == 'true' && steps.sweep.outputs.exit == '1'
         run: |
@@ -207,7 +233,7 @@ jobs:
           exit 1
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name name-clearance.sweep.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name name-clearance.sweep.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store name-clearance in the bridge's private home (generated)
         if: always()
         shell: bash

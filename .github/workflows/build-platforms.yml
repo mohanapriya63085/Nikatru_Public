@@ -21,7 +21,83 @@ permissions:
   actions: read
 
 jobs:
+  nikatru-pin:
+    name: Pin the private commit this run builds (generated)
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Check out the candidate commit, attempt 1 (generated)
+        id: nikatru-pin-checkout-1
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 1 (generated)
+        id: nikatru-pin-test-1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-1.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '1'
+          NIKATRU_ATTEMPTS: '1'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Pin the commit every job of this run checks out (generated)
+        id: pin
+        shell: bash
+        env:
+          NIKATRU_PINNED: ${{ steps.nikatru-pin-test-1.outputs.sha }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ -n "$NIKATRU_P_SHA" ] && ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the dispatched sha \"$NIKATRU_P_SHA\" is not 40 lowercase hex characters: nothing is pinned"
+            exit 1
+          fi
+          if [ "$NIKATRU_P_MAIN_PUSH" = true ] && [ -n "$NIKATRU_PINNED" ]; then
+            if [ "$NIKATRU_PINNED" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::a push to main pinned $NIKATRU_PINNED, not the pushed sha $NIKATRU_P_SHA: nothing is pinned"
+              exit 1
+            fi
+            if ! git -C .nikatru-main merge-base --is-ancestor "$NIKATRU_PINNED" HEAD; then
+              echo "::error::the pushed sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
+              exit 1
+            fi
+          fi
+          if [ -z "$NIKATRU_PINNED" ]; then
+            echo "::error::no candidate became the commit this run builds in 1 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"
+            exit 1
+          fi
+          echo "pinned $NIKATRU_PINNED"
+          echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
+
   gate:
+    needs: [nikatru-pin]
     name: Require ci-gate to have passed
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: ubuntu-24.04
@@ -33,7 +109,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
           fetch-depth: 20
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -51,9 +127,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -69,6 +145,24 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Require ci-gate to have passed for this commit
         id: verdict
         env:
@@ -81,19 +175,19 @@ jobs:
           node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.gate.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -108,7 +202,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    needs: gate
+    needs: [nikatru-pin, gate]
     outputs:
       apps: ${{ steps.workspace.outputs.apps }}
       GITHUB_SHA_SHORT: ${{ steps.workspace.outputs.GITHUB_SHA_SHORT }}
@@ -135,9 +229,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -153,6 +247,24 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: This lane owns the tag
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         env:
@@ -163,7 +275,7 @@ jobs:
           node tooling/ci/tag-owner.mjs --lane .github/workflows/build-platforms.yml --tag "$REF_NAME"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.prepare.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.prepare.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The tag must name the version the app declares
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         env:
@@ -175,7 +287,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --tag "$REF_NAME" --ref-type "$REF_TYPE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.prepare.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.prepare.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The tagged version carries its release notes
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         env:
@@ -187,7 +299,7 @@ jobs:
           node tooling/ci/assert-release-notes.mjs --tag "$REF_NAME" --ref-type "$REF_TYPE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.prepare.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.prepare.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The matrix comes from the workspace, never from this file
         id: workspace
         env:
@@ -207,19 +319,19 @@ jobs:
           echo "Building: ${apps}" >> "$GITHUB_STEP_SUMMARY"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.prepare.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.prepare.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.prepare.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -233,8 +345,9 @@ jobs:
     name: Linux + Web + Android
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: ubuntu-24.04
+    environment: signing
     timeout-minutes: 45
-    needs: prepare
+    needs: [nikatru-pin, prepare]
     strategy:
       fail-fast: false
       matrix:
@@ -266,9 +379,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -284,11 +397,43 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
         with:
           distribution: temurin
           java-version: '17'
-      - uses: ./.github/actions/setup-flutter
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
       - name: Linux build deps
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -299,7 +444,7 @@ jobs:
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -307,7 +452,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Derive the release line from pubspec
         id: ver
         run: |
@@ -316,7 +461,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve this app's base href from the catalogue
         id: base
         run: |
@@ -325,7 +470,7 @@ jobs:
           node tooling/ci/assert-catalog-reachable.mjs --emit-base-href ${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build web
         env:
           BASE_HREF: ${{ steps.base.outputs.base_href }}
@@ -340,7 +485,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} web web
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build linux
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -353,7 +498,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} linux linux-snap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Prepare the AppImage signing key
         env:
           APPIMAGE_SIGNING_KEY_B64: ${{ secrets.APPIMAGE_SIGNING_KEY_B64 }}
@@ -363,7 +508,7 @@ jobs:
           node tooling/ci/appimage-signing.mjs --app ${{ matrix.app }} --channel linux-appimage
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Generate the snapcraft recipe
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -371,7 +516,7 @@ jobs:
           node tooling/release/generate-snapcraft.mjs --app ${{ matrix.app }} --bundle apps/${{ matrix.app }}/build/linux/x64/release/bundle --out "$RUNNER_TEMP/snapcraft-${{ matrix.app }}" --version ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The generated recipe is complete, still derived, and packable here
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -379,7 +524,7 @@ jobs:
           node tooling/ci/assert-snapcraft-generable.mjs --emitted "$RUNNER_TEMP/snapcraft-${{ matrix.app }}/snap/snapcraft.yaml" --app ${{ matrix.app }} --pack-runner ubuntu-24.04
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install snapcraft (the track tooling/versions.json pins)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -390,7 +535,7 @@ jobs:
           sudo snap install snapcraft --classic --channel "$track"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Pack the snap (no upload)
         env:
           APP: ${{ matrix.app }}
@@ -415,7 +560,7 @@ jobs:
           ls -l "$collected"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The packed snap loads only libraries it carries (ldd on the primed binary)
         env:
           APP: ${{ matrix.app }}
@@ -429,7 +574,7 @@ jobs:
           node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Prepare the Android upload key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -442,7 +587,7 @@ jobs:
           node tooling/ci/android-signing.mjs --app ${{ matrix.app }} --channel android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build android (apk — sideloadable build proof)
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
@@ -455,7 +600,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} apk android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build android (aab — the Google Play artifact)
         id: build_aab
         env:
@@ -469,7 +614,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} appbundle android-play
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the .aab with the channel its build compiled in
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -477,7 +622,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel android-play --build-step build_aab apps/${{ matrix.app }}/build/app/outputs/bundle/release/*.aab
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Prepare the apps.gov.in signing key (its own key, never the upload key)
         id: agi_key
         env:
@@ -514,7 +659,7 @@ jobs:
           echo "keystore_path=${keystore}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Set the Play .apk aside (Flutter writes every .apk to one path)
         working-directory: apps/${{ matrix.app }}
         run: |
@@ -527,7 +672,7 @@ jobs:
           if [ -f build/app/outputs/flutter-apk/app-release.apk.sha1 ]; then mv build/app/outputs/flutter-apk/app-release.apk.sha1 build/android-play-apk-aside/; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build android (apk — apps.gov.in, its own key, sells on the India rail)
         id: build_apk_agi
         env:
@@ -545,7 +690,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} apk apps-gov-in
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Take the apps.gov.in .apk out, and put the Play .apk back
         id: agi_apk
         working-directory: apps/${{ matrix.app }}
@@ -569,7 +714,7 @@ jobs:
           echo "apk=apps/${APP}/build/apps-gov-in/${file}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the apps.gov.in .apk with the channel its build compiled in
         env:
           APK: ${{ steps.agi_apk.outputs.apk }}
@@ -579,7 +724,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel apps-gov-in --build-step build_apk_agi "$APK"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ matrix.app }}-linux-android for this run's later jobs (generated)
         id: nikatru-stage-1
         if: ${{ !cancelled() }}
@@ -593,11 +738,20 @@ jobs:
             apps/${{ matrix.app }}/build/symbols/android-apk-apps-gov-in
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off symbols-${{ matrix.app }}-linux-android to this run's later jobs (generated)
+      - name: Seal symbols-${{ matrix.app }}-linux-android for the public cache (generated)
+        id: nikatru-seal-1
         if: ${{ (!cancelled()) && steps.nikatru-stage-1.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off symbols-${{ matrix.app }}-linux-android to this run's later jobs (generated)
+        if: ${{ (!cancelled()) && steps.nikatru-seal-1.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: The .aab must be signed by the upload key, not the debug key
@@ -607,7 +761,7 @@ jobs:
           node tooling/ci/assert-artifact-signed.mjs apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -615,7 +769,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform linux_web_android
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every native library is aligned for a 16 KB memory page
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -623,7 +777,7 @@ jobs:
           node --single-threaded tooling/ci/assert-elf-page-alignment.mjs apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Dump the .aab's merged permissions, cross-checked against the Play .apk
         id: aab_permissions
         run: |
@@ -632,7 +786,7 @@ jobs:
           node tooling/ci/dump-aab-permissions.mjs --aab apps/${{ matrix.app }}/build/app/outputs/bundle/release/app-release.aab --apk apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk --out ${{ runner.temp }}/android-permissions.json --run-id ${{ github.run_id }} --commit ${{ env.NIKATRU_SHA }} --artifact store-${{ matrix.app }}-android-aab-${{ env.ANDROID_SIGNING_POSTURE }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.29 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Data safety merged set equals this build's .aab
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -640,7 +794,7 @@ jobs:
           node tooling/ci/assert-play-declarations.mjs --merged-dump ${{ runner.temp }}/android-permissions.json --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.30 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The built .apk passes the static apps.gov.in VAPT items
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -648,7 +802,7 @@ jobs:
           node tooling/ci/assert-android-vapt-manifest.mjs apps/${{ matrix.app }}/build/app/outputs/flutter-apk/app-release.apk --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.32 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -656,7 +810,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.33 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
@@ -676,7 +830,7 @@ jobs:
           done
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.34 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in .apk passes the static apps.gov.in VAPT items
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -684,7 +838,7 @@ jobs:
           node tooling/ci/assert-android-vapt-manifest.mjs ${{ steps.agi_apk.outputs.apk }} --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.39 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in .apk's native libraries are aligned for a 16 KB memory page
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -692,7 +846,7 @@ jobs:
           node --single-threaded tooling/ci/assert-elf-page-alignment.mjs ${{ steps.agi_apk.outputs.apk }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.40 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in listing media is still the derivation of the Play set
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -700,7 +854,7 @@ jobs:
           node --single-threaded tooling/ci/assert-apps-gov-in-media.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.41 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The apps.gov.in .apk — its signer against the pin, its minSdk against the form
         id: agi_verify
         run: |
@@ -709,7 +863,7 @@ jobs:
           node tooling/ci/assert-apps-gov-in-apk.mjs --apk ${{ steps.agi_apk.outputs.apk }} --app ${{ matrix.app }} --posture ${{ steps.agi_key.outputs.posture }} --kit-dir ${{ runner.temp }}/apps-gov-in-upload-kit
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_web_android.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_web_android.42 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage ${{ steps.agi_verify.outputs.artifact_name }} for this run's later jobs (generated)
         id: nikatru-stage-2
         shell: bash
@@ -720,11 +874,20 @@ jobs:
             ${{ steps.agi_apk.outputs.apk }}.channel.json
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off ${{ steps.agi_verify.outputs.artifact_name }} to this run's later jobs (generated)
+      - name: Seal ${{ steps.agi_verify.outputs.artifact_name }} for the public cache (generated)
+        id: nikatru-seal-2
         if: ${{ (success()) && steps.nikatru-stage-2.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ steps.agi_verify.outputs.artifact_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off ${{ steps.agi_verify.outputs.artifact_name }} to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-seal-2.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-${{ steps.agi_verify.outputs.artifact_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Store upload-kit-${{ steps.agi_verify.outputs.artifact_name }} in the bridge's private home (generated)
@@ -776,12 +939,12 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.linux_web_android.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -796,7 +959,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: windows-2025
     timeout-minutes: 30
-    needs: prepare
+    needs: [nikatru-pin, prepare]
     strategy:
       fail-fast: false
       matrix:
@@ -823,9 +986,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -841,14 +1004,46 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-flutter
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
       - name: Git may write paths past MAX_PATH
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows.3 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.3 --default-shell {0}
         run: |
           git config --global core.longpaths true
           git config --global --get core.longpaths
       - name: Resolve the workspace
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows.4 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.4 --default-shell {0}
         run: flutter pub get --enforce-lockfile
       - name: Derive the release line from pubspec
         id: ver
@@ -859,7 +1054,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Build windows
         id: build_windows
         env:
@@ -867,7 +1062,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows.6 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.6 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store
       - name: Stage symbols-${{ matrix.app }}-windows for this run's later jobs (generated)
         id: nikatru-stage-3
@@ -878,11 +1073,20 @@ jobs:
             apps/${{ matrix.app }}/build/symbols/windows
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off symbols-${{ matrix.app }}-windows to this run's later jobs (generated)
+      - name: Seal symbols-${{ matrix.app }}-windows for the public cache (generated)
+        id: nikatru-seal-3
         if: ${{ (success()) && steps.nikatru-stage-3.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off symbols-${{ matrix.app }}-windows to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-seal-3.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Package MSIX (Microsoft Store)
@@ -895,7 +1099,7 @@ jobs:
           node ../../tooling/store/msix-visual-name.mjs --app ${{ matrix.app }} build/windows/msix/${{ matrix.app }}.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The MSIX carries the identity the register declares
         shell: bash
         run: |
@@ -904,7 +1108,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-msix.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows.9 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows.9 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Stamp the .msix with the channel its build compiled in
         shell: bash
         run: |
@@ -913,21 +1117,21 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel windows-store --build-step build_windows apps/${{ matrix.app }}/build/windows/msix/*.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows.12 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.12 --default-shell {0}
         run: >
           node tooling/ci/assert-artifact-shape.mjs
           --app ${{ matrix.app }} --platform windows
       - name: Install glitchtip-cli (pinned by version AND by digest)
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows.13 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.13 --default-shell {0}
         run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
       - name: Upload the native debug symbols to GlitchTip
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
           APP: ${{ matrix.app }}
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows.14 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows.14 --default-shell {0}
         run: |
           $ErrorActionPreference = 'Stop'
           $gt = Get-Content -Raw tooling/ops/glitchtip-project.json | ConvertFrom-Json
@@ -946,11 +1150,20 @@ jobs:
             apps/${{ matrix.app }}/build/windows/msix/*.msix.channel.json
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off store-${{ matrix.app }}-windows-msix to this run's later jobs (generated)
+      - name: Seal store-${{ matrix.app }}-windows-msix for the public cache (generated)
+        id: nikatru-seal-4
         if: ${{ (success()) && steps.nikatru-stage-4.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off store-${{ matrix.app }}-windows-msix to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-seal-4.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Hand this job's red detail to the report job, sealed (generated)
@@ -959,12 +1172,12 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.windows.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -980,7 +1193,7 @@ jobs:
     runs-on: windows-11-arm
     timeout-minutes: 60
     continue-on-error: true
-    needs: [prepare, windows]
+    needs: [nikatru-pin, prepare, windows]
     strategy:
       fail-fast: false
       matrix:
@@ -1054,9 +1267,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -1072,19 +1285,55 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-flutter
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+        env:
+          USERDOMAIN: ${{ steps.nikatru-key-account.outputs.domain }}
+          USERNAME: ${{ steps.nikatru-key-account.outputs.user }}
+          PATH: ${{ steps.nikatru-key-account.outputs.path }}
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         timeout-minutes: 5
         with:
           cache: 'false'
       - name: Git may write paths past MAX_PATH
         timeout-minutes: 1
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.3 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.3 --default-shell {0}
         run: |
           git config --global core.longpaths true
           git config --global --get core.longpaths
       - name: Resolve the workspace
         timeout-minutes: 4
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.4 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.4 --default-shell {0}
         run: flutter pub get --enforce-lockfile
       - name: Derive the release line from pubspec
         timeout-minutes: 1
@@ -1096,7 +1345,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows_arm64.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows_arm64.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Build windows
         timeout-minutes: 20
         id: build_windows
@@ -1105,7 +1354,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.6 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.6 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store
       - name: Stage symbols-${{ matrix.app }}-windows-arm64 for this run's later jobs (generated)
         id: nikatru-stage-5
@@ -1116,11 +1365,20 @@ jobs:
             apps/${{ matrix.app }}/build/symbols/windows
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off symbols-${{ matrix.app }}-windows-arm64 to this run's later jobs (generated)
+      - name: Seal symbols-${{ matrix.app }}-windows-arm64 for the public cache (generated)
+        id: nikatru-seal-5
         if: ${{ (success()) && steps.nikatru-stage-5.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off symbols-${{ matrix.app }}-windows-arm64 to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-seal-5.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Package MSIX (Microsoft Store, arm64)
@@ -1134,7 +1392,7 @@ jobs:
           node ../../tooling/store/msix-visual-name.mjs --app ${{ matrix.app }} build/windows/msix/${{ matrix.app }}-arm64.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows_arm64.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows_arm64.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The MSIX carries the identity the register declares, and says arm64
         timeout-minutes: 1
         shell: bash
@@ -1144,7 +1402,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-msix.mjs --app ${{ matrix.app }} --arch arm64 apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}-arm64.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows_arm64.9 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows_arm64.9 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Stamp the .msix with the channel its build compiled in
         timeout-minutes: 1
         shell: bash
@@ -1154,16 +1412,16 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel windows-store --build-step build_windows apps/${{ matrix.app }}/build/windows/msix/*.msix
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.windows_arm64.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.windows_arm64.10 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         timeout-minutes: 1
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.12 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.12 --default-shell {0}
         run: >
           node tooling/ci/assert-artifact-shape.mjs
           --app ${{ matrix.app }} --platform windows --arch arm64
       - name: Install glitchtip-cli (pinned by version AND by digest)
         timeout-minutes: 2
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.13 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.13 --default-shell {0}
         run: node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$env:RUNNER_TEMP"
       - name: Upload the native debug symbols to GlitchTip
         timeout-minutes: 3
@@ -1171,7 +1429,7 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
           APP: ${{ matrix.app }}
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.14 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.14 --default-shell {0}
         run: |
           $ErrorActionPreference = 'Stop'
           $gt = Get-Content -Raw tooling/ops/glitchtip-project.json | ConvertFrom-Json
@@ -1184,13 +1442,23 @@ jobs:
         id: nikatru-restore-6
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
           enableCrossOsArchive: true
           fail-on-cache-miss: true
-      - name: Place the store-${{ matrix.app }}-windows-msix hand-off where download-artifact put it (generated)
+      - name: Unseal the store-${{ matrix.app }}-windows-msix hand-off (generated)
+        id: nikatru-unseal-6
         if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-6.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the store-${{ matrix.app }}-windows-msix hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-6.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1204,7 +1472,7 @@ jobs:
         env:
           APP: ${{ matrix.app }}
           BUNDLE_VERSION: ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}.0
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.17 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.17 --default-shell {0}
         run: |
           $ErrorActionPreference = 'Stop'
           $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
@@ -1225,11 +1493,11 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "makeappx bundle exited $LASTEXITCODE" }
       - name: The bundle carries x64 and arm64 (the Store submission path, dry run)
         timeout-minutes: 1
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.18 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.18 --default-shell {0}
         run: node tooling/release/submit-windows-store.mjs --dry-run --app ${{ matrix.app }}
       - name: Every artifact this lane claims exists, and is not empty (the bundle)
         timeout-minutes: 1
-        shell: node tooling/ci/quiet-step.mjs --name build-platforms.windows_arm64.19 --default-shell {0}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.19 --default-shell {0}
         run: >
           node tooling/ci/assert-artifact-shape.mjs
           --app ${{ matrix.app }} --platform windows-msixbundle
@@ -1239,12 +1507,12 @@ jobs:
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.windows_arm64.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -1260,7 +1528,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     continue-on-error: true
-    needs: prepare
+    needs: [nikatru-pin, prepare]
     strategy:
       fail-fast: false
       matrix:
@@ -1288,9 +1556,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -1306,7 +1574,39 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-flutter
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         timeout-minutes: 8
         with:
           cache: 'false'
@@ -1321,7 +1621,7 @@ jobs:
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace
         timeout-minutes: 3
         run: |
@@ -1330,7 +1630,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Derive the release line from pubspec
         timeout-minutes: 1
         id: ver
@@ -1340,7 +1640,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build linux
         timeout-minutes: 8
         env:
@@ -1354,7 +1654,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} linux linux-snap
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ matrix.app }}-linux-arm64 for this run's later jobs (generated)
         id: nikatru-stage-7
         shell: bash
@@ -1364,11 +1664,20 @@ jobs:
             apps/${{ matrix.app }}/build/symbols/linux
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off symbols-${{ matrix.app }}-linux-arm64 to this run's later jobs (generated)
+      - name: Seal symbols-${{ matrix.app }}-linux-arm64 for the public cache (generated)
+        id: nikatru-seal-7
         if: ${{ (success()) && steps.nikatru-stage-7.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off symbols-${{ matrix.app }}-linux-arm64 to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-seal-7.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Generate the snapcraft recipe
@@ -1379,7 +1688,7 @@ jobs:
           node tooling/release/generate-snapcraft.mjs --app ${{ matrix.app }} --bundle apps/${{ matrix.app }}/build/linux/arm64/release/bundle --out "$RUNNER_TEMP/snapcraft-${{ matrix.app }}" --version ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The generated recipe is complete, still derived, and packable here
         timeout-minutes: 1
         run: |
@@ -1388,7 +1697,7 @@ jobs:
           node tooling/ci/assert-snapcraft-generable.mjs --emitted "$RUNNER_TEMP/snapcraft-${{ matrix.app }}/snap/snapcraft.yaml" --app ${{ matrix.app }} --pack-runner ubuntu-24.04-arm
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install snapcraft (the track tooling/versions.json pins)
         timeout-minutes: 5
         run: |
@@ -1405,7 +1714,7 @@ jobs:
           [ "$(printf '%s\n%s\n' "$want" "$got" | sort -V | sed -n 1p)" = "$want" ] || { echo "::error title=snapcraft pin::the ${track} track served snapcraft ${got}, BELOW the floor ${want} in tooling/versions.json: a rollback on the track, not a release to pack with."; exit 1; }
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Pack the snap (no upload)
         timeout-minutes: 12
         env:
@@ -1431,7 +1740,7 @@ jobs:
           ls -l "$collected"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The packed snap loads only libraries it carries (ldd on the primed binary)
         timeout-minutes: 1
         env:
@@ -1446,7 +1755,7 @@ jobs:
           node tooling/ci/assert-snap-primed-libs.mjs --prime "$prime"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         timeout-minutes: 1
         run: |
@@ -1455,19 +1764,19 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform linux-artifacts --arch arm64
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.linux_arm64.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.linux_arm64.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.linux_arm64.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -1481,8 +1790,9 @@ jobs:
     name: macOS + iOS
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: macos-26
+    environment: signing
     timeout-minutes: 30
-    needs: prepare
+    needs: [nikatru-pin, prepare]
     strategy:
       fail-fast: false
       matrix:
@@ -1514,9 +1824,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -1532,7 +1842,39 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-flutter
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
       - name: Resolve the workspace
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1540,7 +1882,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Derive the release line from pubspec
         id: ver
         run: |
@@ -1549,7 +1891,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Toolchain under test
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1559,7 +1901,7 @@ jobs:
           flutter --version
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The Xcode floor is met, not just declared
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1567,7 +1909,7 @@ jobs:
           node tooling/ci/assert-xcode-floor.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Patch the SDK for flutter/flutter#188060 (macOS AOT abort)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1575,7 +1917,7 @@ jobs:
           python3 tooling/ci/patch-flutter-macos-aot.py "$FLUTTER_ROOT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Prepare the Apple distribution identity
         env:
           APPLE_DIST_CERT_P12_BASE64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
@@ -1589,7 +1931,7 @@ jobs:
           node tooling/ci/apple-signing.mjs --app ${{ matrix.app }} --channel ios-appstore --channel macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Point the Xcode projects at the imported identity
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         working-directory: apps/${{ matrix.app }}
@@ -1623,7 +1965,7 @@ jobs:
           echo "::endgroup::"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The signing identity is reachable from this shell
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -1634,7 +1976,7 @@ jobs:
           security find-identity -v "$APPLE_KEYCHAIN_PATH"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build macos
         id: build_macos
         env:
@@ -1648,7 +1990,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} macos macos-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The macOS bundle is signed by the identity this lane intended
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1656,7 +1998,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs apps/${{ matrix.app }}/build/macos/Build/Products/Release/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The macOS bundle carries the Info.plist keys app.yaml renders
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1664,7 +2006,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/macos/Build/Products/Release/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build ios (signed archive + export)
         id: build_ipa
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
@@ -1679,7 +2021,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} ipa ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the .ipa with the channel its build compiled in
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -1688,7 +2030,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel ios-appstore --build-step build_ipa apps/${{ matrix.app }}/build/ios/ipa/*.ipa
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The .ipa carries the Info.plist keys app.yaml renders
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -1697,7 +2039,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/ios/ipa/*.ipa
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build ios (no codesign — unsigned build proof)
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         env:
@@ -1711,7 +2053,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} ios ios-appstore
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage symbols-${{ matrix.app }}-apple for this run's later jobs (generated)
         id: nikatru-stage-8
         shell: bash
@@ -1722,11 +2064,20 @@ jobs:
             apps/${{ matrix.app }}/build/symbols/ios
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off symbols-${{ matrix.app }}-apple to this run's later jobs (generated)
+      - name: Seal symbols-${{ matrix.app }}-apple for the public cache (generated)
+        id: nikatru-seal-8
         if: ${{ (success()) && steps.nikatru-stage-8.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off symbols-${{ matrix.app }}-apple to this run's later jobs (generated)
+        if: ${{ (success()) && steps.nikatru-seal-8.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: Package the macOS .pkg (Mac App Store)
@@ -1750,7 +2101,7 @@ jobs:
           ls -l "$out"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stamp the .pkg with the channel its build compiled in
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -1759,7 +2110,7 @@ jobs:
           node tooling/ci/stamp-channel.mjs --channel macos-appstore --build-step build_macos apps/${{ matrix.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: PROVE the .ipa and .pkg are real and signed
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         run: |
@@ -1768,7 +2119,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs --capture ${{ runner.temp }}/apple-capture apps/${{ matrix.app }}/build/ios/ipa/*.ipa apps/${{ matrix.app }}/build/macos/pkg/*.pkg
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store ci-proof-apple-capture-${{ matrix.app }} in the bridge's private home (generated)
         if: ${{ !cancelled() && env.APPLE_SIGNING_POSTURE == 'release-signed' }}
         shell: bash
@@ -1791,7 +2142,7 @@ jobs:
           exit "$status"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The iOS bundle is signed by the identity this lane intended
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         run: |
@@ -1800,7 +2151,7 @@ jobs:
           node tooling/ci/assert-artifact-signed-apple.mjs apps/${{ matrix.app }}/build/ios/iphoneos/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The iOS bundle carries the Info.plist keys app.yaml renders
         if: env.APPLE_SIGNING_POSTURE != 'release-signed'
         run: |
@@ -1809,7 +2160,7 @@ jobs:
           node tooling/ci/assert-built-info-plist.mjs --app ${{ matrix.app }} apps/${{ matrix.app }}/build/ios/iphoneos/*.app
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1817,7 +2168,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform apple
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1825,7 +2176,7 @@ jobs:
           node tooling/ci/install-pinned-tool.mjs glitchtip-cli --out "$RUNNER_TEMP"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.27 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Upload the native debug symbols to GlitchTip
         env:
           SENTRY_AUTH_TOKEN: ${{ secrets.GLITCHTIP_TOKEN }}
@@ -1845,19 +2196,19 @@ jobs:
           done
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.apple.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name build-platforms.apple.28 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.apple.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -1871,14 +2222,15 @@ jobs:
     name: all-platforms
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    needs: [gate, prepare, linux_web_android, windows, windows_arm64, linux_arm64, apple, durable_symbols, release, attest]
+    needs: [nikatru-pin, gate, prepare, linux_web_android, windows, windows_arm64, linux_arm64, apple, durable_symbols, release, attest]
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v'))) && (always())
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          fetch-depth: 2
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -1895,9 +2247,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -1915,8 +2267,6 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Require every platform green
         run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           echo "gate=${{ needs.gate.result }} prepare=${{ needs.prepare.result }} linux_web_android=${{ needs.linux_web_android.result }} windows=${{ needs.windows.result }} windows_arm64=${{ needs.windows_arm64.result }} linux_arm64=${{ needs.linux_arm64.result }} apple=${{ needs.apple.result }} durable_symbols=${{ needs.durable_symbols.result }} release=${{ needs.release.result }} attest=${{ needs.attest.result }}"
           # 'skipped' added by review 2026-07-31: a job-level `if:` on any
           # platform job would otherwise let this print "All 8 platform builds green"
@@ -1928,29 +2278,6 @@ jobs:
           # ⏱ 2026-10-13 (review of #449 at 7271a693 finding 2): windows_arm64 and linux_arm64 carry continue-on-error
           # while their tooling/ci/lane-advisory.json entries hold, so a failed one reads success above. Said, not hidden.
           echo "::notice title=ADVISORY arm64::windows_arm64 and linux_arm64 do not gate yet (tooling/ci/lane-advisory.json): a failed one reads success here; its own job shows its real conclusion on the run page"
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name build-platforms.all_platforms.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Hand this job's red detail to the report job, sealed (generated)
-        id: nikatru-handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.all_platforms.${{ strategy.job-index }}
-        run: |
-          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
-            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
-          fi
-      - name: Save the hand-off (generated)
-        if: always() && steps.nikatru-handoff.outputs.has == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-build-platforms.all_platforms.${{ strategy.job-index }}
-          enableCrossOsArchive: true
 
   attest:
     name: Attest and verify every release file (${{ matrix.app }})
@@ -1958,7 +2285,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     timeout-minutes: 15
-    needs: [prepare, release]
+    needs: [nikatru-pin, prepare, release]
     permissions:
       contents: read
       id-token: write
@@ -1989,9 +2316,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -2017,13 +2344,23 @@ jobs:
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
           enableCrossOsArchive: true
           fail-on-cache-miss: true
-      - name: Place the release-dist-${{ matrix.app }} hand-off where download-artifact put it (generated)
+      - name: Unseal the release-dist-${{ matrix.app }} hand-off (generated)
+        id: nikatru-unseal-9
         if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-9.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the release-dist-${{ matrix.app }} hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-unseal-9.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2058,14 +2395,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     timeout-minutes: 15
-    needs:
-      - gate
-      - prepare
-      - linux_web_android
-      - windows
-      - windows_arm64
-      - linux_arm64
-      - apple
+    needs: [nikatru-pin, gate, prepare, linux_web_android, windows, windows_arm64, linux_arm64, apple]
     permissions:
       contents: read
       actions: read
@@ -2095,9 +2425,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -2118,12 +2448,22 @@ jobs:
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
           enableCrossOsArchive: true
-      - name: Place the symbols-${{ matrix.app }}-linux-android hand-off where download-artifact put it (generated)
+      - name: Unseal the symbols-${{ matrix.app }}-linux-android hand-off (generated)
+        id: nikatru-unseal-10
         if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-10.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the symbols-${{ matrix.app }}-linux-android hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-10.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2137,12 +2477,22 @@ jobs:
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
           enableCrossOsArchive: true
-      - name: Place the symbols-${{ matrix.app }}-windows hand-off where download-artifact put it (generated)
+      - name: Unseal the symbols-${{ matrix.app }}-windows hand-off (generated)
+        id: nikatru-unseal-11
         if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-11.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the symbols-${{ matrix.app }}-windows hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-11.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2156,12 +2506,22 @@ jobs:
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
           enableCrossOsArchive: true
-      - name: Place the symbols-${{ matrix.app }}-windows-arm64 hand-off where download-artifact put it (generated)
+      - name: Unseal the symbols-${{ matrix.app }}-windows-arm64 hand-off (generated)
+        id: nikatru-unseal-12
         if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-12.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the symbols-${{ matrix.app }}-windows-arm64 hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-12.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2175,12 +2535,22 @@ jobs:
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
           enableCrossOsArchive: true
-      - name: Place the symbols-${{ matrix.app }}-linux-arm64 hand-off where download-artifact put it (generated)
+      - name: Unseal the symbols-${{ matrix.app }}-linux-arm64 hand-off (generated)
+        id: nikatru-unseal-13
         if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-13.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the symbols-${{ matrix.app }}-linux-arm64 hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-13.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2194,12 +2564,22 @@ jobs:
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
           enableCrossOsArchive: true
-      - name: Place the symbols-${{ matrix.app }}-apple hand-off where download-artifact put it (generated)
+      - name: Unseal the symbols-${{ matrix.app }}-apple hand-off (generated)
+        id: nikatru-unseal-14
         if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-14.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the symbols-${{ matrix.app }}-apple hand-off where download-artifact put it (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-unseal-14.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2242,13 +2622,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment: production
     timeout-minutes: 20
-    needs:
-      - gate
-      - prepare
-      - linux_web_android
-      - windows
-      - apple
-      - durable_symbols
+    needs: [nikatru-pin, gate, prepare, linux_web_android, windows, apple, durable_symbols]
     outputs:
       nothing_owed: ${{ steps.stage.outputs.nothing_owed }}
     permissions:
@@ -2281,9 +2655,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -2303,12 +2677,22 @@ jobs:
         id: nikatru-restore-15
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
           enableCrossOsArchive: true
-      - name: Place the apps-gov-in-${{ matrix.app }}-apk hand-off where download-artifact put it (generated)
+      - name: Unseal the apps-gov-in-${{ matrix.app }}-apk hand-off (generated)
+        id: nikatru-unseal-15
         if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-15.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_PREFIX: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
+        run: node tooling/ci/shell-handoff.mjs unseal
+      - name: Place the apps-gov-in-${{ matrix.app }}-apk hand-off where download-artifact put it (generated)
+        if: ${{ (success()) && steps.nikatru-unseal-15.outcome == 'success' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -2455,11 +2839,20 @@ jobs:
           NIKATRU_PATHS: dist
           NIKATRU_IF_NO_FILES: error
         run: node tooling/ci/shell-handoff.mjs stage
-      - name: Hand off release-dist-${{ matrix.app }} to this run's later jobs (generated)
+      - name: Seal release-dist-${{ matrix.app }} for the public cache (generated)
+        id: nikatru-seal-16
         if: ${{ (steps.stage.outputs.nothing_owed != matrix.app) && steps.nikatru-stage-16.outputs.has == 'true' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: node tooling/ci/shell-handoff.mjs seal
+      - name: Hand off release-dist-${{ matrix.app }} to this run's later jobs (generated)
+        if: ${{ (steps.stage.outputs.nothing_owed != matrix.app) && steps.nikatru-seal-16.outcome == 'success' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
-          path: .nikatru-handoff/x
+          path: .nikatru-handoff/sealed
           key: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
       - name: The register must be able to name where this ships
@@ -2681,7 +3074,7 @@ jobs:
     needs: [gate, prepare, linux_web_android, windows, windows_arm64, linux_arm64, apple, durable_symbols, release, attest, all_platforms, nikatru-collect]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/subscriptiontracker-v')))
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

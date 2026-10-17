@@ -1,0 +1,46 @@
+{
+  "_generated": "by tooling/ci/gen-public-shell.mjs; read by report.py beside it. Do not edit.",
+  "bridgeUrl": "https://gh-bridge.nikatru.workers.dev/report",
+  "postTimeoutS": 30,
+  "prefix": "nikatru-detail-",
+  "slots": 8,
+  "sendBudgetS": 360,
+  "gate": null,
+  "lanes": [
+    {
+      "job": "platform-db-migrate",
+      "context": "ci/platform-db-migrate",
+      "members": [
+        "migrate-platform-db."
+      ]
+    },
+    {
+      "job": "deploy-web",
+      "context": "ci/deploy-web",
+      "members": [
+        "deploy-web."
+      ]
+    },
+    {
+      "job": "money-sandbox",
+      "context": "ci/money-sandbox",
+      "members": [
+        "deploy-sandbox-unit."
+      ]
+    },
+    {
+      "job": "money-gate",
+      "context": "ci/money-gate",
+      "members": [
+        "money-sandbox-legs."
+      ]
+    },
+    {
+      "job": "deploy-workers",
+      "context": "ci/deploy-workers",
+      "members": [
+        "deploy-workers."
+      ]
+    }
+  ]
+}

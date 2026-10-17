@@ -67,9 +67,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -85,6 +85,19 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
       - name: Refuse main and a ref that is not a plain branch name
         timeout-minutes: 1
         env:
@@ -103,7 +116,7 @@ jobs:
           fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -172,7 +185,7 @@ jobs:
           echo "sha=$head" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -198,7 +211,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Record the tree before the goldens are re-rendered
         timeout-minutes: 2
         run: |
@@ -210,7 +223,7 @@ jobs:
           done > "$RUNNER_TEMP/before.txt"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: flutter test --update-goldens
         timeout-minutes: 15
         run: |
@@ -225,7 +238,7 @@ jobs:
           done < "$RUNNER_TEMP/packages.txt"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Only golden PNGs of the tested packages changed
         id: delta
         timeout-minutes: 2
@@ -269,7 +282,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The same tests pass WITHOUT --update-goldens
         timeout-minutes: 15
         run: |
@@ -284,7 +297,7 @@ jobs:
           done < "$RUNNER_TEMP/packages.txt"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage the changed PNGs at their repository paths
         if: steps.delta.outputs.count != '0'
         timeout-minutes: 2
@@ -312,7 +325,7 @@ jobs:
           } > "$RUNNER_TEMP/goldens/goldens-run.txt"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store goldens-${{ github.run_id }} in the bridge's private home (generated)
         if: steps.delta.outputs.count != '0'
         timeout-minutes: 5
@@ -351,7 +364,7 @@ jobs:
           node tooling/ops/bridge-propose.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Nothing changed
         if: steps.delta.outputs.count == '0'
         timeout-minutes: 1
@@ -361,7 +374,7 @@ jobs:
           echo "::notice title=No golden changed::The re-render on Linux produced the committed PNGs byte for byte, and the tests pass. Nothing to upload or apply."
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name update-goldens.regenerate.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name update-goldens.regenerate.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

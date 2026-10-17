@@ -4,6 +4,7 @@
   "postTimeoutS": 30,
   "prefix": "nikatru-detail-",
   "slots": 8,
+  "sendBudgetS": 360,
   "gate": {
     "job": "dry-run",
     "context": "catalog-sync",

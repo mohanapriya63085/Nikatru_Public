@@ -14,7 +14,10 @@
 # no-detail fallback) and nowhere else in the shell (limb H): a step that runs
 # pull-request code never holds it, and the job that holds it restores nothing
 # another job saved (limb I). NIKATRU_DETAIL_KEY is in each quiet job's hand-off
-# step and the report job's send step only (limb J).
+# STAGING step and the report job's send step only (limb J): ⏱ 2026-10-08 · A7-05, every
+# quiet job runs the shell's OWN staged copy of this file (and of quiet-step.mjs), never the
+# private checkout's; its staging step derives this run attempt's key (`derive`) before any
+# private code runs, and the hand-off seals under that key alone (limb Z).
 #
 # Why Python: the job must run without the private tree, so the reporter is a
 # file of the shell repository, and it needs nothing but the standard library
@@ -26,11 +29,13 @@
 #
 #   Every quiet job hands its red detail over SEALED (lead ruling p7-bridge-payload-r3,
 #   item 3: the private repo's test output and PR text never sit in plain text in the
-#   PUBLIC repo's Actions cache). Its generated hand-off step runs, from the private
-#   checkout, this same file:
-#   shell-report.py handoff $RUNNER_TEMP/report-detail.md within the cap (fit_bytes: each
+#   PUBLIC repo's Actions cache). Its generated steps run the shell's STAGED copy of this file:
+#   report.py derive        (the staging step, before any private code) this run attempt's
+#                           key, HMAC of `<run_id>-<attempt>` under NIKATRU_DETAIL_KEY, to
+#                           NIKATRU_DETAIL_KEY_FILE (A7-05)
+#   report.py handoff       $RUNNER_TEMP/report-detail.md within the cap (fit_bytes: each
 #                           red section's failing tests kept, its tail cut first), sealed with
-#                           NIKATRU_DETAIL_KEY and bound to its own cache key
+#                           that run key and bound to its own cache key
 #                           (NIKATRU_HANDOFF), written as .nikatru-detail/detail.sealed,
 #                           and `has=true` to $GITHUB_OUTPUT so actions/cache/save runs;
 #                           no key, no hand-off: nothing is ever cached in the clear
@@ -50,6 +55,11 @@
 #                           sealed), as ONE JSON bundle {v, handoffs: {key: sealed},
 #                           unrestored: [key]} within SEALED_MAX_CHARS, written as the
 #                           job output `detail`; one that does not fit is named only
+#
+#   report.py pr-meta       (the gate job's pre-read, before any private code) the private PR
+#                           as it is now through POST /pr-meta, signed with BRIDGE_READ_SECRET and
+#                           bound to this run, to NIKATRU_PR_META_FILE; red when the PR changes a
+#                           RUNNER_SOURCES file without the lead's RUNNER_LABEL (A7-05/A7-06)
 #
 #   nikatru-report — the report secret; restores nothing, runs nothing another job
 #   wrote (assert-public-shell.mjs limb I). A fresh sparse checkout of this shell, then
@@ -150,6 +160,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 import urllib.error
@@ -215,10 +226,35 @@ def load_config(path):
             raise Lost(f'{path} has no `{k}`')
     if not isinstance(cfg['postTimeoutS'], (int, float)) or isinstance(cfg['postTimeoutS'], bool) or cfg['postTimeoutS'] <= 0:
         raise Lost(f'{path}: postTimeoutS {cfg["postTimeoutS"]!r} is not a positive number of seconds')
-    for c in [cfg['gate']] + list(cfg['lanes']):
+    budget = cfg.get('sendBudgetS', None)
+    if budget is not None and (not isinstance(budget, (int, float)) or isinstance(budget, bool) or budget < post_worst_s(cfg)):
+        raise Lost(f'{path}: sendBudgetS {budget!r} is not a number of seconds that fits one whole post ({post_worst_s(cfg)} s)')
+    for c in items(cfg):
         if not CONTEXT.match(c.get('context', '')):
             raise Lost(f'{path}: {c.get("context")!r} is not a status context the bridge accepts')
     return cfg
+
+
+def items(cfg):
+    """⏱ 2026-10-08 (sysfix-a1-ci-shell, m2/m6): what a config reports, the GATE FIRST: a post-gate config
+    (<stem>-deploys.json) has no gate (`gate: null`). The gate leads so that a bridge that eats the send's
+    budget still gets the one status the landers gate on."""
+    return ([cfg['gate']] if cfg.get('gate') else []) + list(cfg['lanes'])
+
+
+def is_gate(item, cfg):
+    return cfg.get('gate') is not None and item is cfg['gate']
+
+
+def post_worst_s(cfg):
+    """The longest one post() can take: every attempt at its timeout, and every pause between them."""
+    return cfg['postTimeoutS'] * (len(RETRY_DELAYS) + 1) + sum(RETRY_DELAYS)
+
+
+def wanted(key, prefix, cfg):
+    """True when the hand-off `key` is this run's and belongs to a job this config reports."""
+    member = member_of(key, prefix)
+    return member is not None and any(f'{member}.'.startswith(p) for item in items(cfg) for p in item['members'])
 
 
 def run_of(env):
@@ -411,6 +447,72 @@ def unseal(key, run, sealed):
     return _keystream_xor(enc, nonce, ct)
 
 
+def run_key(master, run):
+    """The key ONE run attempt's hand-offs are sealed with: HMAC-SHA256 of the run under the master
+    NIKATRU_DETAIL_KEY, as hex (A7-05, system review 2026-10-08). A quiet job derives it in its staging
+    step, before any private code runs, and its hand-off seals with it alone: the pull-request code a
+    quiet job runs can read at most its OWN run attempt's detail, never another run's sealed cache entry
+    (every shell run shares main's cache scope)."""
+    return hmac.new(master.encode('utf-8'), b'nikatru-detail/run\0' + run.encode('utf-8'), hashlib.sha256).hexdigest()
+
+
+def run_handoff_key(master, run_id):
+    """The key ONE run's sealed artifact hand-offs (tooling/ci/shell-handoff.mjs seal/unseal) use: HMAC-SHA256 of
+    the run id under the master NIKATRU_DETAIL_KEY, as hex. ⏱ 2026-10-16 · PR #690 review finding 3 (open item m7):
+    a quiet job's seal and unseal read it from NIKATRU_HANDOFF_KEY_FILE and never hold the master. By run id, not
+    attempt: a re-run job restores an earlier attempt's hand-off. shell-handoff.mjs handoffRunKey is the same
+    function (test/shell-handoff.test.mjs pins the two equal)."""
+    if not re.match(r'^[1-9][0-9]{0,19}$', run_id or ''):
+        raise Lost(f'GITHUB_RUN_ID is not a run id ({run_id!r})')
+    return hmac.new(master.encode('utf-8'), b'nikatru-handoff/run\0' + run_id.encode('utf-8'), hashlib.sha256).hexdigest()
+
+
+def _write_key(path, key):
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w', encoding='ascii') as f:
+        f.write(key)
+
+
+def derive(env):
+    """A quiet job's staging step: this run attempt's red-detail hand-off key, written to NIKATRU_DETAIL_KEY_FILE,
+    and/or this run's artifact hand-off key (run_handoff_key), written to NIKATRU_HANDOFF_KEY_FILE — each 0600 and
+    masked. With no master key (a run that gets no secrets) it writes nothing: a red detail is then not handed
+    over and a seal refuses, exactly as a hand-off without a key never was."""
+    out = env.get('NIKATRU_DETAIL_KEY_FILE', '')
+    handoff_out = env.get('NIKATRU_HANDOFF_KEY_FILE', '')
+    if not out and not handoff_out:
+        raise Lost('neither NIKATRU_DETAIL_KEY_FILE nor NIKATRU_HANDOFF_KEY_FILE is set: nowhere to put a run key')
+    master = env.get('NIKATRU_DETAIL_KEY', '')
+    if not master:
+        print('-- derive: NIKATRU_DETAIL_KEY is not set; this job hands nothing over')
+        return 0
+    if out:
+        key = run_key(master, run_of(env))
+        print(f'::add-mask::{key}')
+        _write_key(out, key)
+        print(f'ok derive: the hand-off key of run attempt {run_of(env)}')
+    if handoff_out:
+        key = run_handoff_key(master, env.get('GITHUB_RUN_ID', ''))
+        print(f'::add-mask::{key}')
+        _write_key(handoff_out, key)
+        print(f'ok derive: the artifact hand-off key of run {env.get("GITHUB_RUN_ID", "")}')
+    return 0
+
+
+def handoff_key(env):
+    """(key, derived): the run key the staging step wrote to NIKATRU_DETAIL_KEY_FILE. A shell generated before
+    the staging step existed names no such file and hands this step NIKATRU_DETAIL_KEY itself, as it always
+    did; its own report job unseals with that key, so the pair keeps working until the shell is re-synced."""
+    path = env.get('NIKATRU_DETAIL_KEY_FILE', '')
+    if path:
+        try:
+            with open(path, encoding='ascii') as f:
+                return f.read().strip(), True
+        except OSError:
+            return '', True
+    return env.get('NIKATRU_DETAIL_KEY', ''), False
+
+
 def handoff_key_ok(name, env):
     """True when `name` is a hand-off cache key of this run+attempt: `nikatru-detail-<run>-<attempt>-<member>.<n>`."""
     return bool(re.match(r'^[A-Za-z0-9._-]{1,400}$', name)) and member_of(name, f'{HANDOFF_PREFIX}{run_of(env)}-') is not None
@@ -431,9 +533,10 @@ def handoff(env):
     name = env.get('NIKATRU_HANDOFF', '')
     if not handoff_key_ok(name, env):
         raise Lost(f'NIKATRU_HANDOFF {name[:100]!r} is not a hand-off key of this run and attempt: nothing handed over')
-    key = env.get('NIKATRU_DETAIL_KEY', '')
+    key, derived = handoff_key(env)
     if not key:
-        raise Lost('NIKATRU_DETAIL_KEY is not set: the red detail is NOT handed over (it is never cached in plain text)')
+        raise Lost(('the run key the staging step derives is absent' if derived else 'NIKATRU_DETAIL_KEY is not set')
+                   + ': the red detail is NOT handed over (it is never cached in plain text)')
     plain = fit_bytes(text, HANDOFF_MAX_BYTES).encode('utf-8')
     os.makedirs(DETAIL_DIR, exist_ok=True)
     with open(os.path.join(DETAIL_DIR, SEALED_FILE), 'w', encoding='ascii') as f:
@@ -469,7 +572,7 @@ def plan(env, cfg):
     prefix = run_prefix(cfg, env)
     slots = int(cfg['slots'])
     try:
-        keys = [k for k in list_keys(env, prefix) if member_of(k, prefix)]
+        keys = [k for k in list_keys(env, prefix) if wanted(k, prefix, cfg)]
     except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
         # The statuses still go out (send runs `if: always()`); only the detail is lost, and said.
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
@@ -637,14 +740,18 @@ def read_bundle(raw, env, cfg):
         raise Refused(f'not JSON this reporter can read ({type(e).__name__})')
     if not isinstance(bundle, dict) or bundle.get('v') != BUNDLE_VERSION or not isinstance(bundle.get('handoffs'), dict) or not isinstance(bundle.get('unrestored'), list):
         raise Refused(f'not a version-{BUNDLE_VERSION} hand-off bundle')
-    key = env.get('NIKATRU_DETAIL_KEY', '')
-    if bundle['handoffs'] and not key:
+    master = env.get('NIKATRU_DETAIL_KEY', '')
+    if bundle['handoffs'] and not master:
         raise Refused('NIKATRU_DETAIL_KEY is not set')
     details = {}
     for name, sealed in bundle['handoffs'].items():
         member = run_member_of(name, cfg, env) if re.match(r'^[A-Za-z0-9._-]{1,400}$', name) else None
         if member is None or not isinstance(sealed, str):
             raise Refused(f'{name[:100]!r} is not a hand-off of this run (this attempt or an earlier one)')
+        # A7-05: each hand-off is sealed under the run key of the attempt that made it, never under the master;
+        # a re-run report job (attempt N+1) unseals attempt N's with attempt N's key.
+        attempt = name[len(f"{cfg['prefix']}{env['GITHUB_RUN_ID']}-"):].split('-', 1)[0]
+        key = run_key(master, f"{env['GITHUB_RUN_ID']}-{attempt}")
         try:
             plain = unseal(key, name, sealed)
         except Refused as e:
@@ -659,11 +766,11 @@ def read_bundle(raw, env, cfg):
     # and a note (an applied PR-scoped secret-scan exemption) is said where the reviewer looks.
     notes = notes_of(join_detail([t for texts in details.values() for t in texts]))
     out = {}
-    for item in list(cfg['lanes']) + [cfg['gate']]:
+    for item in items(cfg):
         detail = detail_for(item['members'], details)
-        if item is cfg['gate'] and notes and notes not in detail:
+        if is_gate(item, cfg) and notes and notes not in detail:
             detail = join_detail([detail, notes])
-        if item is cfg['gate'] and unrestored:
+        if is_gate(item, cfg) and unrestored:
             detail += '\n\n(' + str(len(unrestored)) + ' more red job(s) handed over detail this report could not carry: ' + ', '.join(unrestored) + ')\n'
         if detail.strip():
             out[item['context']] = detail
@@ -686,7 +793,7 @@ def gate_origin_ok(env, cfg=None):
 def dispatch_detail(details, lost, results, cfg):
     """The ONE detail of a manual run: each red or detailed lane and the gate, a section each, within DETAIL_MAX_BYTES."""
     sections = []
-    for item in list(cfg['lanes']) + [cfg['gate']]:
+    for item in items(cfg):
         result = results.get(item['job'], 'absent')
         text = details.get(item['context'], '')
         if result in ('failure', 'cancelled') or text.strip():
@@ -728,7 +835,7 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen):
     return 1
 
 
-def send(env, cfg, opener=urllib.request.urlopen):
+def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
     if env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
         return send_dispatch(env, cfg, opener)
     url = cfg.get('bridgeUrl')
@@ -745,17 +852,26 @@ def send(env, cfg, opener=urllib.request.urlopen):
         raise Lost('NIKATRU_RESULTS is not the JSON map of job results the report job is given')
     details, lost = received_details(env, cfg)
     failed = 0
-    for item in list(cfg['lanes']) + [cfg['gate']]:
+    # ⏱ 2026-10-08 (sysfix-a1-ci-shell, m6): ONE budget for the whole send, so it and its fallback end inside the
+    # job's timeout (22 contexts x a hung bridge used to be ~36 min against 10); a post starts only while a whole
+    # one still fits, and every context left is named, not sent. The gate goes first (items), so it is the last to lose.
+    budget = cfg.get('sendBudgetS')
+    started = clock()
+    for item in items(cfg):
         state = STATE_OF.get(results.get(item['job'], ''))
         if state is None:
             print(f"-- {item['context']}: {results.get(item['job'], 'absent')}, not reported")
             continue
-        if item is cfg['gate'] and not gate_origin_ok(env, cfg):
+        if budget is not None and clock() - started + post_worst_s(cfg) > budget:
+            failed += 1
+            print(f"x  {item['context']}: NOT reported — the send's {budget} s budget cannot fit another post")
+            continue
+        if is_gate(item, cfg) and not gate_origin_ok(env, cfg):
             failed += 1
             print(f"x  {item['context']}: NOT reported — this run is not a pull request, main or a tag run (nor a lead dispatch its config allows) "
                   f"(event {env.get('NIKATRU_P_EVENT', '')!r}, ref {env.get('NIKATRU_P_REF', '')!r}); only such a run may write the gate")
             continue
-        status, why = post(url, secret, build(item['context'], state, env, details.get(item['context'], ''), item is cfg['gate']), cfg['postTimeoutS'], opener)
+        status, why = post(url, secret, build(item['context'], state, env, details.get(item['context'], ''), is_gate(item, cfg)), cfg['postTimeoutS'], opener)
         ok = 200 <= status < 300
         failed += 0 if ok else 1
         print(f"{'ok' if ok else 'x '} {item['context']} {state} -> HTTP {status}{f' ({why})' if why and not ok else ''}")
@@ -769,16 +885,205 @@ def send(env, cfg, opener=urllib.request.urlopen):
     return 1 if failed else 0
 
 
+# ── pr-meta: the gate's live read, by the shell's own copy ──────────────────
+#
+# ⏱ 2026-10-08 · A7-05/A7-06 (system review A7-security-supply). The gate's read of the private PR as it is
+# now used to be signed by tooling/ci/gate-pr-body.mjs from the pull request's own merge checkout, so the PR's
+# code held BRIDGE_READ_SECRET. Now the gate job's staging copy of THIS file signs it, in a generated step that
+# runs before any private code of the job, and writes the answer to NIKATRU_PR_META_FILE (outside the
+# workspace); the body step reads that file and holds no secret. The read is bound to this live run: it carries
+# this job's Actions OIDC token (X-Bridge-OIDC, minted for OIDC_AUDIENCE), and the bridge verifies it and re-reads
+# that run, which must be live and titled with exactly this PR and head (sysfix-a4-gh-bridge A4-01, which
+# superseded this file's first form: a run id the sender named).
+#
+# The same step refuses a pull request that changes a file the shell runs as its OWN copy (RUNNER_SOURCES:
+# every quiet step's wrapper and this reporter), or the generator and register that decide what is staged and
+# what every step runs (PR #165 review finding 4), unless the private PR carries RUNNER_LABEL, which a lead sets:
+# after the merge every shell job runs that file, and its wrapper decides every lane's exit code. Shell-owned:
+# the PR cannot edit this check out of its own gate.
+# PR #213 review finding 3: also the shell's byte copies (what a job runs after the sync) and the generator's
+# relative-import closure (a bent import lets --check accept a modified copy).
+RUNNER_SOURCES = ('tooling/ci/quiet-step.mjs', 'tooling/ci/shell-report.py', 'tooling/ci/gen-public-shell.mjs',
+                  'tooling/ci/public-shell.json',
+                  'shell/.github/nikatru/report.py', 'shell/.github/nikatru/quiet-step.mjs',
+                  'shell/.github/nikatru/tree-walk.mjs',
+                  'tooling/app-yaml/yaml.mjs', 'tooling/ci/app-set.mjs', 'tooling/ci/assert-shell-current.mjs',
+                  'tooling/ci/d1-sql-inventory.mjs', 'tooling/ci/d1-stores.mjs', 'tooling/ci/flutter-release-build.mjs',
+                  'tooling/ci/run-context.mjs', 'tooling/ci/shell-handoff.mjs', 'tooling/ci/text-reductions.mjs',
+                  'tooling/ci/tree-walk.mjs', 'tooling/ci/workflow-scan.mjs', 'tooling/ci/wrangler-environments.mjs',
+                  'tooling/e2e/backend.mjs',
+                  'tooling/ops/actions-oidc.mjs',
+                  'tooling/store/capture-backend.mjs')
+# ⏱ 2026-10-09 · PR #213 review finding 5. THE LABEL IS ADVISORY. The bridge returns label NAMES, and every lane and
+# every lead writes to the private repo as the one GitHub identity, so who applied a label proves nothing and an
+# allow-list of appliers would admit everyone it lists. Any writer can add it to its own PR. What the label buys is
+# that a change to the shell's runner is deliberate and visible (a named label on the PR, a red gate until then),
+# not that a lead reviewed it; the pass line says so on every use.
+RUNNER_LABEL = 'lead-reviewed-runner'
+RUNNER_LABEL_ADVISORY = ('ADVISORY: the label is not tied to who applied it (one GitHub identity writes for every lane and '
+                         'lead), so it marks the change deliberate, not reviewed')
+PR_META_TIMEOUT_S = 30
+# The audience the bridge accepts (tooling/ops/actions-oidc.mjs BRIDGE_OIDC_AUDIENCE; shell-report.test.mjs holds them equal).
+OIDC_AUDIENCE = 'nikatru-gh-bridge-propose'
+# A JWT's shape: what an Actions OIDC token is, and nothing that could carry a header break.
+JWT = re.compile(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$')
+
+
+def pr_meta_message(number, sha, ts):
+    """What the bridge verifies (services/gh-bridge/src/pr-meta.ts readMessage)."""
+    return f'{number}.{sha}.{ts}'
+
+
+def caller_token(env, opener=urllib.request.urlopen):
+    """(token | None, why | None): this job's OIDC token for the bridge, as actions-oidc.mjs callerToken. Neither
+    ACTIONS_ID_TOKEN_REQUEST_URL nor _TOKEN: (None, None), the read goes without one and the bridge refuses it with
+    its reason. An endpoint that will not mint: (None, why), lost, never a silent send without a token."""
+    url, bearer = env.get('ACTIONS_ID_TOKEN_REQUEST_URL', ''), env.get('ACTIONS_ID_TOKEN_REQUEST_TOKEN', '')
+    if not url and not bearer:
+        return None, None
+    if not url or not bearer:
+        return None, 'the job offers half of the OIDC endpoint (ACTIONS_ID_TOKEN_REQUEST_URL / _TOKEN)'
+    u = urllib.parse.urlsplit(url)
+    if not (u.scheme == 'https' or (u.scheme == 'http' and u.hostname == '127.0.0.1')) or u.username or u.password:
+        return None, 'ACTIONS_ID_TOKEN_REQUEST_URL is not an https URL'
+    query = [(k, v) for k, v in urllib.parse.parse_qsl(u.query, keep_blank_values=True) if k != 'audience'] + [('audience', OIDC_AUDIENCE)]
+    req = urllib.request.Request(urllib.parse.urlunsplit((u.scheme, u.netloc, u.path, urllib.parse.urlencode(query), '')), method='GET', headers={
+        'authorization': f'bearer {bearer}', 'accept': 'application/json; api-version=2.0', 'user-agent': USER_AGENT})
+    try:
+        with opener(req, timeout=PR_META_TIMEOUT_S) as r:
+            value = json.loads(r.read().decode('utf-8')).get('value') if r.status == 200 else None
+    except urllib.error.HTTPError as e:
+        return None, f'the runner would not mint the OIDC token (HTTP {e.code})'
+    except (urllib.error.URLError, OSError, ValueError, AttributeError) as e:
+        return None, f'the OIDC token request failed ({type(e).__name__})'
+    if not isinstance(value, str) or not JWT.match(value):
+        return None, 'the runner answered with no OIDC token'
+    return value, None
+
+
+def runner_sources_touched(run=subprocess.run):
+    """The RUNNER_SOURCES the checked-out merge commit changes against its first parent, or None when git
+    cannot say (the gate's first checkout fetches the two parents for this)."""
+    try:
+        r = run(['git', 'diff', '--name-only', '--no-renames', 'HEAD^1', 'HEAD', '--', *RUNNER_SOURCES],
+                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    return sorted({l.strip() for l in r.stdout.splitlines() if l.strip()})
+
+
+# ⏱ 2026-10-16 · PR #690 review finding 4: the read tooling/ops/bridge-read.mjs made (fix-pr216, PR #553) retried a
+# 429 from the bridge's per-minute bucket and a send that got no answer at all; this port made ONE send, so a rate-limit
+# hit or one dropped connection lost the gate of a run whose every lane was green. The same bounded waits, re-signed
+# each time: a 429 is sent again after each of RATE_WAITS_S, a send with no answer (a refused or dropped connection, a
+# DNS blip) after each of NETWORK_WAITS_S; a TIMEOUT (the bridge took the connection and did not answer) and every
+# other HTTP answer are lost at once.
+RATE_WAITS_S = (20, 45)
+NETWORK_WAITS_S = (2, 6)
+
+
+def _is_timeout(e):
+    return isinstance(e, TimeoutError) or isinstance(getattr(e, 'reason', None), TimeoutError)
+
+
+def read_pr_meta(env, opener=urllib.request.urlopen, now=time.time, sleep=time.sleep):
+    """({answer} | None, why): a signed POST /pr-meta, carrying this job's OIDC token, re-sent on a 429 or on no
+    answer at all within RATE_WAITS_S / NETWORK_WAITS_S."""
+    url = env.get('NIKATRU_BRIDGE_READ_URL', '')
+    secret = env.get('BRIDGE_READ_SECRET', '')
+    pr, sha = env.get('NIKATRU_P_PR', ''), env.get('NIKATRU_P_SHA', '')
+    if not re.match(r'^https://[A-Za-z0-9.-]+/pr-meta$', url) and not re.match(r'^http://127\.0\.0\.1:[0-9]+/pr-meta$', url):
+        return None, 'NIKATRU_BRIDGE_READ_URL is not the bridge\'s https /pr-meta URL'
+    if not secret:
+        return None, 'BRIDGE_READ_SECRET is not set in this step: the read cannot be signed'
+    if not re.fullmatch(r'[1-9][0-9]{0,9}', pr) or not SHA.match(sha):
+        return None, 'the dispatch names no PR number and head sha'
+    rate, net = 0, 0
+    while True:
+        token, lost = caller_token(env, opener)
+        if lost:
+            return None, lost
+        ts = int(now())
+        body = {'number': int(pr), 'sha': sha, 'ts': ts}
+        raw = json.dumps(body).encode('utf-8')
+        sig = 'sha256=' + hmac.new(secret.encode('utf-8'), pr_meta_message(pr, sha, ts).encode('utf-8'), hashlib.sha256).hexdigest()
+        headers = {'content-type': 'application/json', 'user-agent': USER_AGENT, 'x-bridge-signature': sig}
+        if token:
+            headers['x-bridge-oidc'] = token
+        req = urllib.request.Request(url, data=raw, method='POST', headers=headers)
+        try:
+            with opener(req, timeout=PR_META_TIMEOUT_S) as r:
+                if r.status != 200:
+                    return None, f'the bridge answered HTTP {r.status}'
+                answer = json.loads(r.read().decode('utf-8'))
+            break
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and rate < len(RATE_WAITS_S):
+                sleep(RATE_WAITS_S[rate])
+                rate += 1
+                continue
+            if e.code == 429:
+                return None, f'the bridge\'s rate limit refused the read (HTTP 429) — after {len(RATE_WAITS_S) + 1} sends'
+            return None, f'the bridge refused the read (HTTP {e.code})'
+        except (urllib.error.URLError, OSError) as e:
+            if not _is_timeout(e) and net < len(NETWORK_WAITS_S):
+                sleep(NETWORK_WAITS_S[net])
+                net += 1
+                continue
+            more = f' — after {net + rate + 1} sends' if not _is_timeout(e) else ''
+            return None, f'the bridge read failed ({type(e).__name__}){more}'
+        except ValueError as e:
+            return None, f'the bridge read failed ({type(e).__name__})'
+    if not isinstance(answer, dict):
+        return None, 'the bridge answered something that is not a JSON object'
+    return answer, ''
+
+
+def pr_meta(env, opener=urllib.request.urlopen, run=subprocess.run, now=time.time, sleep=time.sleep):
+    """The gate's pre-read: the answer (or {"lost": why}) to NIKATRU_PR_META_FILE; exit 1 when the PR changes a
+    RUNNER_SOURCES file without RUNNER_LABEL, 2 when that cannot be decided. A lost read alone exits 0: the body
+    step turns it into COVERAGE LOST with its reason."""
+    out = env.get('NIKATRU_PR_META_FILE', '')
+    if not out:
+        raise Lost('NIKATRU_PR_META_FILE is not set: nowhere to put the read')
+    touched = runner_sources_touched(run)
+    answer, why = read_pr_meta(env, opener, now, sleep)
+    with open(out, 'w', encoding='utf-8') as f:
+        json.dump(answer if answer is not None else {'lost': why}, f)
+    print(f'ok pr-meta: read PR #{env.get("NIKATRU_P_PR", "?")} live' if answer is not None else f'-- pr-meta: {why}')
+    if touched is None:
+        print('x COVERAGE LOST - report.py: which shell-run files this pull request changes could not be read (git diff HEAD^1 HEAD)', file=sys.stderr)
+        return 2
+    if not touched:
+        return 0
+    if answer is None:
+        print(f'x COVERAGE LOST - report.py: this pull request changes {", ".join(touched)}, and its labels could not be read: {why}', file=sys.stderr)
+        return 2
+    labels = answer.get('labels')
+    if isinstance(labels, list) and RUNNER_LABEL in labels:
+        print(f'ok pr-meta: {", ".join(touched)} changed, and the PR carries {RUNNER_LABEL} — {RUNNER_LABEL_ADVISORY}')
+        return 0
+    print(f'::error title=ci-gate::this pull request changes {", ".join(touched)}, which every shell job runs as the shell\'s own copy after the merge; '
+          f'a lead must add the label {RUNNER_LABEL} to the private PR (then re-run ci-gate)')
+    return 1
+
+
 def main(argv, env):
     try:
         if len(argv) == 1 and argv[0] == 'handoff':
             return handoff(env)
+        if len(argv) == 1 and argv[0] == 'derive':
+            return derive(env)
+        if len(argv) == 1 and argv[0] == 'pr-meta':
+            return pr_meta(env)
         if len(argv) == 2 and argv[0] == 'place':
             return place(argv[1])
         if len(argv) == 2 and argv[0] in ('plan', 'collect', 'send'):
             cfg = load_config(argv[1])
             return {'plan': plan, 'collect': collect, 'send': send}[argv[0]](env, cfg)
-        print('usage: report.py handoff | plan <config> | place <key> | collect <config> | send <config>', file=sys.stderr)
+        print('usage: report.py handoff | derive | pr-meta | plan <config> | place <key> | collect <config> | send <config>', file=sys.stderr)
         return 2
     except Lost as e:
         print(f'x COVERAGE LOST - report.py: {e}', file=sys.stderr)

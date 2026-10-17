@@ -2,12 +2,18 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 1b2826a7d0d59a6444187a4266dec047187b28d2d3aa416044f19d682caeefa3
+  NIKATRU_SHELL_FINGERPRINT: a205321390d00225258f81101d881a89989ad4c90ba183e0f3f9e921b56fc7b8
 
 name: Part of CI · Migrate PLATFORM_DB
 
 on:
   workflow_call:
+    inputs:
+      nikatru_sha:
+        description: The private commit the calling run pinned (generated; empty resolves it here).
+        required: false
+        default: ''
+        type: string
     secrets:
       CLOUDFLARE_API_TOKEN:
         required: false
@@ -39,7 +45,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -57,9 +63,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -84,9 +90,22 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs platform
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: steps.plan.outputs.deploy == 'true'
         working-directory: services/platform
       - name: Apply PLATFORM_DB migrations (before every deploy that reads it)

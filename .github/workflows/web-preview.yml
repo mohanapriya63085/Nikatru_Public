@@ -21,7 +21,278 @@ concurrency:
   cancel-in-progress: ${{ (github.event.client_payload.event || github.event_name) == 'pull_request' }}
 
 jobs:
+  nikatru-pin:
+    name: Pin the private commit this run builds (generated)
+    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Check out the candidate commit, attempt 1 (generated)
+        id: nikatru-pin-checkout-1
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 1 (generated)
+        id: nikatru-pin-test-1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-1.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '1'
+          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Check out the candidate commit, attempt 2 (generated)
+        id: nikatru-pin-checkout-2
+        if: steps.nikatru-pin-test-1.outputs.sha == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 2 (generated)
+        id: nikatru-pin-test-2
+        if: steps.nikatru-pin-test-1.outputs.sha == ''
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-2.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '2'
+          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Check out the candidate commit, attempt 3 (generated)
+        id: nikatru-pin-checkout-3
+        if: steps.nikatru-pin-test-2.outputs.sha == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 3 (generated)
+        id: nikatru-pin-test-3
+        if: steps.nikatru-pin-test-2.outputs.sha == ''
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-3.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '3'
+          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Check out the candidate commit, attempt 4 (generated)
+        id: nikatru-pin-checkout-4
+        if: steps.nikatru-pin-test-3.outputs.sha == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 4 (generated)
+        id: nikatru-pin-test-4
+        if: steps.nikatru-pin-test-3.outputs.sha == ''
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-4.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '4'
+          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Check out the candidate commit, attempt 5 (generated)
+        id: nikatru-pin-checkout-5
+        if: steps.nikatru-pin-test-4.outputs.sha == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 5 (generated)
+        id: nikatru-pin-test-5
+        if: steps.nikatru-pin-test-4.outputs.sha == ''
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-5.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '5'
+          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Check out the candidate commit, attempt 6 (generated)
+        id: nikatru-pin-checkout-6
+        if: steps.nikatru-pin-test-5.outputs.sha == ''
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 6 (generated)
+        id: nikatru-pin-test-6
+        if: steps.nikatru-pin-test-5.outputs.sha == ''
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-6.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '6'
+          NIKATRU_ATTEMPTS: '6'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Pin the commit every job of this run checks out (generated)
+        id: pin
+        shell: bash
+        env:
+          NIKATRU_PINNED: ${{ steps.nikatru-pin-test-1.outputs.sha || steps.nikatru-pin-test-2.outputs.sha || steps.nikatru-pin-test-3.outputs.sha || steps.nikatru-pin-test-4.outputs.sha || steps.nikatru-pin-test-5.outputs.sha || steps.nikatru-pin-test-6.outputs.sha }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ -n "$NIKATRU_P_SHA" ] && ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the dispatched sha \"$NIKATRU_P_SHA\" is not 40 lowercase hex characters: nothing is pinned"
+            exit 1
+          fi
+          if [ "$NIKATRU_P_MAIN_PUSH" = true ] && [ -n "$NIKATRU_PINNED" ]; then
+            if [ "$NIKATRU_PINNED" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::a push to main pinned $NIKATRU_PINNED, not the pushed sha $NIKATRU_P_SHA: nothing is pinned"
+              exit 1
+            fi
+            if ! git -C .nikatru-main merge-base --is-ancestor "$NIKATRU_PINNED" HEAD; then
+              echo "::error::the pushed sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
+              exit 1
+            fi
+          fi
+          if [ -z "$NIKATRU_PINNED" ]; then
+            echo "::error::no candidate became the commit this run builds in 6 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"
+            exit 1
+          fi
+          echo "pinned $NIKATRU_PINNED"
+          echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
+
   plan:
+    needs: [nikatru-pin]
     name: plan
     if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && (github.event.client_payload.draft != true)
     runs-on: ubuntu-24.04
@@ -36,7 +307,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -54,9 +325,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -72,7 +343,38 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - uses: ./.github/actions/setup-node
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: The web units this pull request changed
         id: plan
         run: |
@@ -81,7 +383,7 @@ jobs:
           node tooling/ci/web-preview.mjs --plan >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name web-preview.plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name web-preview.plan.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Previews are off until the owner switches them on
         if: vars.WEB_PREVIEWS != 'on'
         env:
@@ -93,19 +395,19 @@ jobs:
           echo "::nikatru-public::::notice title=web preview::${OFF}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name web-preview.plan.4 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name web-preview.plan.4 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-web-preview.plan.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -117,7 +419,7 @@ jobs:
 
   gate:
     name: Require the pull request's ci-gate to have passed
-    needs: plan
+    needs: [nikatru-pin, plan]
     if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && (needs.plan.outputs.site_count != '0' && vars.WEB_PREVIEWS == 'on')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -129,7 +431,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -146,9 +448,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -164,6 +466,24 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Require ci-gate to have passed for this pull request's head
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -174,19 +494,19 @@ jobs:
           node tooling/ci/assert-gate-passed.mjs "$HEAD_SHA"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name web-preview.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name web-preview.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-web-preview.gate.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -198,7 +518,7 @@ jobs:
 
   preview-site:
     name: Preview ${{ matrix.unit }} on its pr-<n> alias
-    needs: [plan, gate]
+    needs: [nikatru-pin, plan, gate]
     if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && (needs.plan.outputs.site_count != '0' && vars.WEB_PREVIEWS == 'on')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -249,11 +569,24 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
           path: .nikatru-pr-tree
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Stage the static bytes the preview serves
         id: stage
         env:
@@ -315,7 +648,7 @@ jobs:
 
   web-preview:
     name: web-preview
-    needs: [plan, gate, preview-site]
+    needs: [nikatru-pin, plan, gate, preview-site]
     if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && (always() && github.event.client_payload.draft != true)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -326,7 +659,8 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          fetch-depth: 2
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -343,9 +677,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -361,6 +695,24 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Every planned preview ran
         env:
           PLAN: ${{ needs.plan.result }}
@@ -380,19 +732,19 @@ jobs:
           echo "web-preview: every planned preview ran"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name web-preview.web-preview.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name web-preview.web-preview.1 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-web-preview.web-preview.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -403,6 +755,7 @@ jobs:
           enableCrossOsArchive: true
 
   sweep:
+    needs: [nikatru-pin]
     name: Delete expired pr-<n> previews
     if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && ((github.event.client_payload.event || github.event_name) == 'schedule' && vars.WEB_PREVIEWS == 'on')
     runs-on: ubuntu-24.04
@@ -445,7 +798,20 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Refuse anything but the schedule on main
         run: node tooling/ci/assert-deploy-ref.mjs --allow preview-sweep
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Delete every pr-<n> preview past its retention
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_PREVIEW_TOKEN }}
@@ -607,7 +973,7 @@ jobs:
     needs: [plan, gate, preview-site, web-preview, nikatru-collect]
     if: always() && github.event_name == 'repository_dispatch' && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:

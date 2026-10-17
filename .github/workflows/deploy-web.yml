@@ -2,12 +2,18 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 63cd71324df7b26ed80fcbbf5dace38906761747ec5f1551de119b26a5675973
+  NIKATRU_SHELL_FINGERPRINT: 20cb48204b34ff40c5cbf2a6f449e07430597287a12bd2ec8e8b46de6cc1dc8b
 
 name: Part of CI · Deploy web
 
 on:
   workflow_call:
+    inputs:
+      nikatru_sha:
+        description: The private commit the calling run pinned (generated; empty resolves it here).
+        required: false
+        default: ''
+        type: string
     secrets:
       SUPABASE_URL:
         required: true
@@ -47,7 +53,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -64,9 +70,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -82,6 +88,24 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: The matrix comes from the workspace, never from this file
         id: workspace
         run: |
@@ -93,19 +117,19 @@ jobs:
           echo "Deploying web: ${apps}" >> "$GITHUB_STEP_SUMMARY"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name deploy-web.prepare.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-web.prepare.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-deploy-web.prepare.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -139,7 +163,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -157,9 +181,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -189,12 +213,26 @@ jobs:
         run: node tooling/ci/plan-deploy.mjs ${{ matrix.app }}-web
       - name: The build's connect origins must equal the app's connect-src, before it is built
         id: connect
+        if: steps.plan.outputs.deploy == 'true'
         working-directory: .
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
         run: node tooling/web/connect-origins.mjs --app ${{ matrix.app }} --check --emit-connect >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/setup-flutter
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: steps.plan.outputs.deploy == 'true'
       - run: flutter pub get --enforce-lockfile
         if: steps.plan.outputs.deploy == 'true'
@@ -223,7 +261,20 @@ jobs:
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} web web
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
       - name: Self-host the engine's fallback fonts, pinned by sha256
         if: steps.plan.outputs.deploy == 'true'
@@ -360,13 +411,20 @@ jobs:
       - name: Deploy to Cloudflare Pages
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
-        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: apps/${{ matrix.app }}
-          command: pages deploy build/web --project-name=${{ matrix.app }} --branch=main
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          APP: ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pages-deploy.ndjson"
+          rm -f "$out"
+          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy build/web --project-name="$APP" --branch=main
+          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
+          id=""
+          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
+          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
       - name: Smoke — the live site serves THIS build
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
@@ -400,7 +458,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -418,9 +476,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -445,7 +503,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs nikatru-site
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
       - name: Regenerate the discovery surface from the registry
         if: steps.plan.outputs.deploy == 'true'
@@ -523,13 +594,20 @@ jobs:
       - name: Deploy the apex site to nikatru-apex
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
-        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: build/nikatru-apex
-          command: pages deploy . --project-name=nikatru-apex --branch=main
+        working-directory: build/nikatru-apex
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pages-deploy.ndjson"
+          rm -f "$out"
+          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy . --project-name=nikatru-apex --branch=main
+          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
+          id=""
+          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
+          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
       - name: Smoke — nikatru.com serves THIS commit, and its Function answers
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -558,7 +636,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -576,9 +654,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -603,7 +681,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs rajasekarselvam-site
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.plan.outputs.deploy == 'true'
       - name: Read this unit's project, source and public origin from the register
         if: steps.plan.outputs.deploy == 'true'
@@ -646,13 +737,21 @@ jobs:
       - name: Deploy the personal site
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
-        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: build/personal-site
-          command: pages deploy . --project-name=${{ steps.site.outputs.project }} --branch=main
+        working-directory: build/personal-site
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          PROJECT: ${{ steps.site.outputs.project }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pages-deploy.ndjson"
+          rm -f "$out"
+          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy . --project-name="$PROJECT" --branch=main
+          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
+          id=""
+          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
+          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
       - name: Smoke — the site serves THIS commit, and it is this site
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -684,7 +783,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -702,9 +801,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -740,7 +839,20 @@ jobs:
             echo "go=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=status-site::not deployed — STATUS_PAGE_LIVE is '${STATUS_PAGE_LIVE}' (the lead sets it after creating nikatru-status and its DNS record), plan deploy=${{ steps.plan.outputs.deploy }}"
           fi
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.live.outputs.go == 'true'
       - name: Grade the committed status site
         if: steps.live.outputs.go == 'true'
@@ -759,16 +871,26 @@ jobs:
           mkdir -p build/status
           cp -R sites/status/. build/status/
           node tooling/status/build-status.mjs --out build/status --readings "$RUNNER_TEMP/readings.json" --prev "$RUNNER_TEMP/prev.json"
+      - name: Install the locked wrangler island
+        if: steps.live.outputs.go == 'true'
+        run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler
       - name: Deploy the status page to nikatru-status
         if: steps.live.outputs.go == 'true'
         id: deploy
-        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          wranglerVersion: '4.149.0'
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: build/status
-          command: pages deploy . --project-name=nikatru-status --branch=main
+        working-directory: build/status
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/pages-deploy.ndjson"
+          rm -f "$out"
+          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy . --project-name=nikatru-status --branch=main
+          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
+          id=""
+          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
+          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
       - name: Smoke — status.nikatru.com serves THIS build
         if: steps.live.outputs.go == 'true'
         run: node tooling/status/build-status.mjs --smoke https://status.nikatru.com --built build/status/status.json

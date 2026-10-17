@@ -21,7 +21,15 @@ verdict back to that repository. It is generated: a pull request here is not how
   read live by `tooling/ci/assert-shell-barriers.mjs` in the private repository). It is what keeps
   an outsider's workflow from running at all: from waking a chain, and from restoring the
   `actions/cache` hand-offs between the jobs of one run (signed store bundles, debug symbols, the
-  extensions release directory), which a fork pull request's run could otherwise read.
+  extensions release directory). It is no longer the only one: each hand-off is SEALED before
+  it is cached (AES-256-GCM, bound to its cache key) and unsealed only by a job of the same
+  repository holding the key, so a restore without it reads ciphertext. What the seal does NOT
+  stop: the seal steps run in a job that already ran a private pull request's code, which can
+  reach any later step of its job. Those steps hold only keys derived for THIS run (the staging
+  step derives them from the master key before any private code runs; no step after it binds the
+  master), so that code can open or forge its own run's hand-offs and red detail, never another
+  run's. A job that stages nothing (a release or submit job, never a pull request's) binds the
+  master in its seal steps. Against a private pull request's own run it rests on review.
 - **Logs**: each script step prints one line (`ok <step> <ms>` or `RED <step> exit N`). The
   tail of a red step goes to the private pull request, not to this log.
 - **Artifacts**: none here. An artifact meant for a person (a public one is downloadable by anyone
@@ -34,8 +42,9 @@ verdict back to that repository. It is generated: a pull request here is not how
   bridge Worker. Both check out only this repository.
 - **Secrets**: `PRIVATE_DEPLOY_KEY` (read-only deploy key of the private repository),
   `BRIDGE_REPORT_SECRET` (signs the reports; held only by the report job) and
-  `NIKATRU_DETAIL_KEY` (seals each job's red detail at hand-off; held by the hand-off steps and the
-  report job's send),
+  `NIKATRU_DETAIL_KEY` (the master of each job's red-detail and run hand-off keys; held by a quiet job's
+  staging step, which derives this run's keys from it, the seal and unseal steps of a job that stages
+  nothing, and the report job's send),
   `BRIDGE_READ_SECRET` (signs the live read of the pull request; held only by the gate's
   body step, the recheck and the bridge ops steps),
   `BRIDGE_ARTIFACT_SECRET` (signs a private artifact upload; held only by the private-artifact

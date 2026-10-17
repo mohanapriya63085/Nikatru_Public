@@ -32,20 +32,96 @@ permissions:
   contents: read
 
 jobs:
-  rollback:
-    name: Re-promote a recorded Pages deployment or Worker version
+  nikatru-pin:
+    name: Pin the private commit this run builds (generated)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    environment: production
+    timeout-minutes: 10
     permissions:
       contents: read
-      deployments: write
+    outputs:
+      sha: ${{ steps.pin.outputs.sha }}
+    steps:
+      - name: Check out the candidate commit, attempt 1 (generated)
+        id: nikatru-pin-checkout-1
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Test the candidate commit, attempt 1 (generated)
+        id: nikatru-pin-test-1
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_CHECKOUT: ${{ steps.nikatru-pin-checkout-1.outcome }}
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+          NIKATRU_ATTEMPT: '1'
+          NIKATRU_ATTEMPTS: '1'
+          NIKATRU_WAIT_S: '10'
+        run: |
+          if [ "$NIKATRU_CHECKOUT" != success ]; then
+            echo "attempt $NIKATRU_ATTEMPT: the candidate could not be checked out"
+          else
+            sha="$(git rev-parse HEAD)"
+            if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+              if ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then echo "::error::the dispatch of a pull request names no 40-hex head sha (\"$NIKATRU_P_SHA\"): nothing is pinned"; exit 1; fi
+              second="$(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p' | sed -n 2p)"
+              if [ "$second" = "$NIKATRU_P_SHA" ]; then echo "sha=$sha" >> "$GITHUB_OUTPUT"; exit 0; fi
+              echo "attempt $NIKATRU_ATTEMPT: $sha is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${second:-none})"
+            else
+              echo "sha=$sha" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          if [ "$NIKATRU_ATTEMPT" -lt "$NIKATRU_ATTEMPTS" ]; then sleep "$NIKATRU_WAIT_S"; fi
+      - name: Pin the commit every job of this run checks out (generated)
+        id: pin
+        shell: bash
+        env:
+          NIKATRU_PINNED: ${{ steps.nikatru-pin-test-1.outputs.sha }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ -n "$NIKATRU_P_SHA" ] && ! [[ $NIKATRU_P_SHA =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::the dispatched sha \"$NIKATRU_P_SHA\" is not 40 lowercase hex characters: nothing is pinned"
+            exit 1
+          fi
+          if [ "$NIKATRU_P_MAIN_PUSH" = true ] && [ -n "$NIKATRU_PINNED" ]; then
+            if [ "$NIKATRU_PINNED" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::a push to main pinned $NIKATRU_PINNED, not the pushed sha $NIKATRU_P_SHA: nothing is pinned"
+              exit 1
+            fi
+            if ! git -C .nikatru-main merge-base --is-ancestor "$NIKATRU_PINNED" HEAD; then
+              echo "::error::the pushed sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
+              exit 1
+            fi
+          fi
+          if [ -z "$NIKATRU_PINNED" ]; then
+            echo "::error::no candidate became the commit this run builds in 1 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"
+            exit 1
+          fi
+          echo "pinned $NIKATRU_PINNED"
+          echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
+
+  group:
+    needs: [nikatru-pin]
+    name: Name the unit's deploy group
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      group: ${{ steps.group.outputs.group }}
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -62,9 +138,98 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: The deploy concurrency group of the unit
+        id: group
+        env:
+          UNIT: ${{ inputs.unit }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/rollback.mjs --deploy-group --unit "$UNIT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.group.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-rollback.group.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  rollback:
+    name: Re-promote a recorded Pages deployment or Worker version
+    needs: [nikatru-pin, group]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ needs.group.outputs.group }}
+      cancel-in-progress: false
+    environment: production
+    permissions:
+      contents: read
+      deployments: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -82,7 +247,20 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: The dispatch ref is main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
-      - uses: ./.github/actions/setup-node
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Install the wrangler island
         if: ${{ !inputs.dry_run }}
         run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler

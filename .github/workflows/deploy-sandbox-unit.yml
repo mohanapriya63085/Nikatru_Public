@@ -8,6 +8,11 @@ name: Part of deploy · Sandbox deploy unit
 on:
   workflow_call:
     inputs:
+      nikatru_sha:
+        description: The private commit the calling run pinned (generated; empty resolves it here).
+        required: false
+        default: ''
+        type: string
       worker:
         description: "Which sandbox Worker to deploy (as the dispatch input)."
         required: false
@@ -74,9 +79,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -92,6 +97,24 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: The matrix comes from worker-set.mjs, and the input names one of it
         id: set
         env:
@@ -135,7 +158,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name deploy-sandbox-unit.workers.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: "Check out private main beside it (the migrations to compare with, and the check itself) (generated: the private tree)"
         if: inputs.when != 'skip'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -157,19 +180,19 @@ jobs:
           node tooling/ci/assert-sandbox-migrations.mjs --main . --tree ..
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/tooling/ci/quiet-step.mjs" --name deploy-sandbox-unit.workers.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name deploy-sandbox-unit.workers.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
           NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-deploy-sandbox-unit.workers.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/tooling/ci/shell-report.py" handoff
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
           fi
       - name: Save the hand-off (generated)
         if: always() && steps.nikatru-handoff.outputs.has == 'true'
@@ -207,9 +230,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -249,9 +272,11 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: needs.workers.outputs.platform == 'true'
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: needs.workers.outputs.platform == 'true'
         working-directory: services/platform
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
+        if: needs.workers.outputs.platform == 'true'
       - name: Apply PLATFORM_DB migrations to the sandbox (before deploy)
         if: needs.workers.outputs.platform == 'true'
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
@@ -307,9 +332,9 @@ jobs:
           NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
         run: |
           if [ "$NIKATRU_P_EVENT" = pull_request ]; then
-            set -- $(git cat-file -p HEAD | sed -n 's/^parent //p')
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
             if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
-              echo "::error::refs/pull/$NIKATRU_P_PR/merge is not yet the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); GitHub recomputes it after a push — re-run this job"
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
               exit 1
             fi
           fi
@@ -349,9 +374,11 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: matrix.worker.worker != 'none'
-      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts
         if: matrix.worker.worker != 'none'
         working-directory: ${{ matrix.worker.dir }}
+      - run: node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix services/_shared
+        if: matrix.worker.worker != 'none'
       - name: Apply the Worker's D1 migrations to the sandbox (before deploy)
         if: ${{ (matrix.worker.migrations) && matrix.worker.worker != 'none' }}
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0
