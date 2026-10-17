@@ -24,7 +24,7 @@ permissions:
 jobs:
   nikatru-pin:
     name: Pin the private commit this run builds (generated)
-    if: (github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #'))
+    if: "(github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #'))"
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -100,7 +100,7 @@ jobs:
   watch:
     needs: [nikatru-pin]
     name: Laptop state, PR board, run ledger
-    if: (github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #')) && ((github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')
+    if: "(github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #')) && ((github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')"
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -199,7 +199,7 @@ jobs:
   e2e-after-deploy:
     needs: [nikatru-pin]
     name: E2E after a web deploy
-    if: (github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #')) && ((github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')
+    if: "(github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #')) && ((github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main')"
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
