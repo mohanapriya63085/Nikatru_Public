@@ -2,6 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
+  NIKATRU_SHELL_FINGERPRINT: 1b2826a7d0d59a6444187a4266dec047187b28d2d3aa416044f19d682caeefa3
 
 name: Part of CI · Migrate PLATFORM_DB
 
@@ -76,6 +77,8 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        run: node tooling/ci/assert-shell-current.mjs migrate-platform-db.yml
       - name: Plan from the Deployment ledger
         id: plan
         env:

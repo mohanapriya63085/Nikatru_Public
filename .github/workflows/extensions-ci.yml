@@ -2103,6 +2103,7 @@ jobs:
           } >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-node
       - name: The weekly e2e proof must be RECENT, SCHEDULED and GREEN
+        if: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' }}
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}

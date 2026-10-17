@@ -2,6 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
+  NIKATRU_SHELL_FINGERPRINT: 63cd71324df7b26ed80fcbbf5dace38906761747ec5f1551de119b26a5675973
 
 name: Part of CI · Deploy web
 
@@ -177,6 +178,9 @@ jobs:
       - name: Refuse any ref but main
         working-directory: .
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        working-directory: .
+        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
       - name: Plan from the Deployment ledger
         id: plan
         working-directory: .
@@ -434,6 +438,8 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
       - name: Plan from the Deployment ledger
         id: plan
         env:
@@ -590,6 +596,8 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
       - name: Plan from the Deployment ledger
         id: plan
         env:
@@ -714,6 +722,8 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Refuse any ref but main
         run: node tooling/ci/assert-deploy-ref.mjs --allow main
+      - name: The shell running this deploy was generated from this commit
+        run: node tooling/ci/assert-shell-current.mjs deploy-web.yml
       - name: Plan from the Deployment ledger
         id: plan
         env:
