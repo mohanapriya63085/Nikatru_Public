@@ -416,13 +416,18 @@ jobs:
             email="$(sed -n 's/^email=//p' "$out")"
             password="$(sed -n 's/^password=//p' "$out")"
             echo "::add-mask::${password}"
-            MONEY_RAIL="$rail" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" \
+            # why: THE RAIL'S CONSENT ROWS (money run 38905635333 passed every leg and went red here on "no consent
+            # anon_id resolved"): the spec logs each consent request its contexts issue (consent-log.mjs), and the
+            # purge deletes by that log, or proves from it that no row was written (consent_anon_id.mjs
+            # resolveMoneyConsentLog). Removed first, so a log this rail did not write is never read.
+            consent_log="$RUNNER_TEMP/money-consent-${rail}.log"
+            rm -f "$consent_log"
+            MONEY_RAIL="$rail" THROWAWAY_EMAIL="$email" THROWAWAY_PASSWORD="$password" MONEY_CHROME="$chrome" MONEY_CONSENT_LOG="$consent_log" \
               node --import "$SPAWN_CEILING" --test-timeout=600000 --test --test-reporter=spec tooling/e2e/money/money-sandbox.spec.mjs || status=1
             uid="$(sed -n 's/^user_id=//p' "$out")"
-            if [ -n "$uid" ]; then
-              E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
-                node tooling/e2e/purge.mjs || status=1
-            fi
+            # why: ALWAYS after the spec, a user or not: the consent rows belong to the browser profiles, not to the user.
+            E2E_USER_ID="$uid" E2E_APP_ID=subscriptiontracker E2E_MONEY_CONSENT_LOG="$consent_log" PLATFORM_D1_DATABASE_ID="$(node tooling/e2e/money/preflight.mjs --print-sandbox-platform-db)" \
+              node tooling/e2e/purge.mjs || status=1
           done
           # why: the verdict job reads this: a proof that never reached this line proved nothing.
           echo "walked=true" >> "$GITHUB_OUTPUT"
@@ -575,6 +580,7 @@ jobs:
           TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
+          RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
         run: |
           set -euo pipefail
           dbus-run-session -- bash -c '
@@ -717,6 +723,7 @@ jobs:
           TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
           PADDLE_SANDBOX_API_KEY: ${{ secrets.PADDLE_SANDBOX_API_KEY }}
           PADDLE_SANDBOX_CLIENT_TOKEN: ${{ secrets.PADDLE_SANDBOX_CLIENT_TOKEN }}
+          RAZORPAY_TEST_KEY_ID: ${{ secrets.RAZORPAY_TEST_KEY_ID }}
         run: |
           node tooling/e2e/money/desktop.mjs --target windows --log "$RUNNER_TEMP/money-desktop.log"
           echo "walked=true" >> "$GITHUB_OUTPUT"
