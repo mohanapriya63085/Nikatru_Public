@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 20cb48204b34ff40c5cbf2a6f449e07430597287a12bd2ec8e8b46de6cc1dc8b
+  NIKATRU_SHELL_FINGERPRINT: 00e6449907c55fa012446badd9e5621f716feb7a7424e14ae03ea769927bcd8b
 
 name: Part of CI · Deploy web
 
@@ -425,6 +425,14 @@ jobs:
           if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
           if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
           echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
+          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
+          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
+          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
+          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
+          url=""
+          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
+          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — the live site serves THIS build
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
@@ -608,11 +616,19 @@ jobs:
           if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
           if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
           echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
+          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
+          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
+          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
+          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
+          url=""
+          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
+          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — nikatru.com serves THIS commit, and its Function answers
         if: steps.plan.outputs.deploy == 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
-        run: node tooling/sites/smoke-site-deploy.mjs --origin https://nikatru.com --expect-sha ${{ env.NIKATRU_SHA }} --deployment-url "$DEPLOYMENT_URL"
+        run: node tooling/sites/smoke-site-deploy.mjs --origin https://nikatru.com --expect-sha ${{ env.NIKATRU_SHA }} ${DEPLOYMENT_URL:+--deployment-url "$DEPLOYMENT_URL"}
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
@@ -752,13 +768,21 @@ jobs:
           if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
           if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
           echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
+          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
+          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
+          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
+          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
+          url=""
+          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
+          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — the site serves THIS commit, and it is this site
         if: steps.plan.outputs.deploy == 'true'
         env:
           SMOKE_ORIGIN: ${{ steps.live.outputs.smoke_origin }}
           CANONICAL: ${{ steps.site.outputs.canonical }}
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
-        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SMOKE_ORIGIN" --expect-sha "$NIKATRU_SHA" --canonical "$CANONICAL" --deployment-url "$DEPLOYMENT_URL"
+        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SMOKE_ORIGIN" --expect-sha "$NIKATRU_SHA" --canonical "$CANONICAL" ${DEPLOYMENT_URL:+--deployment-url "$DEPLOYMENT_URL"}
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
@@ -891,6 +915,14 @@ jobs:
           if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
           if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
           echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
+          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
+          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
+          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
+          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
+          url=""
+          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
+          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
+          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — status.nikatru.com serves THIS build
         if: steps.live.outputs.go == 'true'
         run: node tooling/status/build-status.mjs --smoke https://status.nikatru.com --built build/status/status.json
