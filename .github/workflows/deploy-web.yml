@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 00e6449907c55fa012446badd9e5621f716feb7a7424e14ae03ea769927bcd8b
+  NIKATRU_SHELL_FINGERPRINT: 2511182fc3f198c295f1d0cd820939b3581e141ceb81262dab18d99506679cc1
 
 name: Part of CI · Deploy web
 
@@ -210,7 +210,7 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs ${{ matrix.app }}-web
+        run: node tooling/ci/plan-deploy.mjs ${{ matrix.app }}-web --recipe deploy-web.yml
       - name: The build's connect origins must equal the app's connect-src, before it is built
         id: connect
         if: steps.plan.outputs.deploy == 'true'
@@ -434,6 +434,7 @@ jobs:
           if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
           echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — the live site serves THIS build
+        id: smoke
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
         run: >
@@ -448,7 +449,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
-        run: node tooling/ci/record-deployment.mjs ${{ matrix.app }}-web ${{ steps.target.outputs.site_url }} --pages-deployment-id "$PAGES_DEPLOYMENT_ID"
+        run: node tooling/ci/record-deployment.mjs ${{ matrix.app }}-web ${{ steps.target.outputs.site_url }} --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"
 
   site:
     name: Deploy the apex site to Cloudflare Pages (nikatru-apex)
@@ -510,7 +511,7 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs nikatru-site
+        run: node tooling/ci/plan-deploy.mjs nikatru-site --recipe deploy-web.yml
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -525,7 +526,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
-        if: steps.plan.outputs.deploy == 'true'
+      - name: Read the apex's public origin from the register
+        id: target
+        run: node tooling/ci/site-target.mjs --emit nikatru-site >> "$GITHUB_OUTPUT"
       - name: Regenerate the discovery surface from the registry
         if: steps.plan.outputs.deploy == 'true'
         run: node tooling/sites/generate-discovery.mjs
@@ -625,16 +628,28 @@ jobs:
           if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
           echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — nikatru.com serves THIS commit, and its Function answers
+        id: smoke
         if: steps.plan.outputs.deploy == 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
-        run: node tooling/sites/smoke-site-deploy.mjs --origin https://nikatru.com --expect-sha ${{ env.NIKATRU_SHA }} ${DEPLOYMENT_URL:+--deployment-url "$DEPLOYMENT_URL"}
+          SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SITE_ORIGIN" --expect-sha ${{ env.NIKATRU_SHA }} ${DEPLOYMENT_URL:+--deployment-url "$DEPLOYMENT_URL"}
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
-        run: node tooling/ci/record-deployment.mjs nikatru-site https://nikatru.com --pages-deployment-id "$PAGES_DEPLOYMENT_ID"
+          SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/ci/record-deployment.mjs nikatru-site "$SITE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"
+      - name: Live — nikatru.com serves the ledger's commit, and its Function answers
+        if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
+        env:
+          LIVE_SHA: ${{ steps.plan.outputs.live_sha }}
+          SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SITE_ORIGIN" --expect-sha "$LIVE_SHA"
+      - name: Live — the checkout pages a sale sends a buyer to can open
+        if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
+        run: node tooling/ops/checkout-pages-live.mjs --strict
 
   personal-site:
     name: Deploy the personal site to Cloudflare Pages (unit rajasekarselvam-site)
@@ -696,7 +711,7 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs rajasekarselvam-site
+        run: node tooling/ci/plan-deploy.mjs rajasekarselvam-site --recipe deploy-web.yml
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -777,6 +792,7 @@ jobs:
           if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
           echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — the site serves THIS commit, and it is this site
+        id: smoke
         if: steps.plan.outputs.deploy == 'true'
         env:
           SMOKE_ORIGIN: ${{ steps.live.outputs.smoke_origin }}
@@ -789,7 +805,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SMOKE_ORIGIN: ${{ steps.live.outputs.smoke_origin }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
-        run: node tooling/ci/record-deployment.mjs rajasekarselvam-site "$SMOKE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID"
+        run: node tooling/ci/record-deployment.mjs rajasekarselvam-site "$SMOKE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"
 
   status-site:
     name: Deploy the status page to Cloudflare Pages (nikatru-status)
@@ -851,17 +867,20 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs status-site
+        run: node tooling/ci/plan-deploy.mjs status-site --recipe deploy-web.yml
       - name: Is the status page live yet?
         id: live
         env:
           STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
+          PLAN_DEPLOY: ${{ steps.plan.outputs.deploy }}
         run: |
-          if [ "$STATUS_PAGE_LIVE" = "true" ] && [ "${{ steps.plan.outputs.deploy }}" = "true" ]; then
+          set -euo pipefail
+          if [ "$STATUS_PAGE_LIVE" = "true" ] && [ "$PLAN_DEPLOY" = "true" ]; then
             echo "go=true" >> "$GITHUB_OUTPUT"
           else
             echo "go=false" >> "$GITHUB_OUTPUT"
-            echo "::notice title=status-site::not deployed — STATUS_PAGE_LIVE is '${STATUS_PAGE_LIVE}' (the lead sets it after creating nikatru-status and its DNS record), plan deploy=${{ steps.plan.outputs.deploy }}"
+            echo "status-site: not deployed this run — plan deploy=${PLAN_DEPLOY}"
+            node tooling/status/inert-until.mjs --live "$STATUS_PAGE_LIVE"
           fi
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -878,6 +897,10 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
         if: steps.live.outputs.go == 'true'
+      - name: Read the status page's public origin from the register
+        if: steps.live.outputs.go == 'true'
+        id: target
+        run: node tooling/ci/site-target.mjs --emit status-site >> "$GITHUB_OUTPUT"
       - name: Grade the committed status site
         if: steps.live.outputs.go == 'true'
         run: |
@@ -885,12 +908,14 @@ jobs:
           node tooling/status/build-status.mjs --check
       - name: Read the surfaces and the live document, and build the site
         if: steps.live.outputs.go == 'true'
+        env:
+          SITE_ORIGIN: ${{ steps.target.outputs.origin }}
         run: |
           set -uo pipefail
           node tooling/ops/status.mjs --json "$RUNNER_TEMP/readings.json" > "$RUNNER_TEMP/status.log" 2>&1
           code=$?
           echo "status.mjs exit: $code"
-          curl -fsS --max-time 15 https://status.nikatru.com/status.json -o "$RUNNER_TEMP/prev.json" || rm -f "$RUNNER_TEMP/prev.json"
+          curl -fsS --max-time 15 "$SITE_ORIGIN/status.json" -o "$RUNNER_TEMP/prev.json" || rm -f "$RUNNER_TEMP/prev.json"
           rm -rf build/status
           mkdir -p build/status
           cp -R sites/status/. build/status/
@@ -924,11 +949,15 @@ jobs:
           if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
           echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
       - name: Smoke — status.nikatru.com serves THIS build
+        id: smoke
         if: steps.live.outputs.go == 'true'
-        run: node tooling/status/build-status.mjs --smoke https://status.nikatru.com --built build/status/status.json
+        env:
+          SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/status/build-status.mjs --smoke "$SITE_ORIGIN" --built build/status/status.json
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
-        run: node tooling/ci/record-deployment.mjs status-site https://status.nikatru.com --pages-deployment-id "$PAGES_DEPLOYMENT_ID"
+          SITE_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/ci/record-deployment.mjs status-site "$SITE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"

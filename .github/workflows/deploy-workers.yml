@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 0857594de7778bc59a6544c9814a64824cc4ae300525e79408eccac388a30ef0
+  NIKATRU_SHELL_FINGERPRINT: 766972b648c224f2950a05e482f0719894d5650394a6b67c7248937f8169816d
 
 name: Part of CI · Deploy workers
 
@@ -201,7 +201,7 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs ${{ matrix.worker.worker }}
+        run: node tooling/ci/plan-deploy.mjs ${{ matrix.worker.worker }} --recipe deploy-workers.yml
       - name: The crash-sink secret this Worker's row names reached this job
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -257,6 +257,7 @@ jobs:
           workingDirectory: ${{ matrix.worker.dir }}
           command: deploy --var GLITCHTIP_DSN:${{ secrets[matrix.worker.dsnSecret] }} --var RELEASE:${{ env.NIKATRU_SHA }}
       - name: Smoke — the live Worker answers at THIS commit
+        id: smoke
         if: steps.plan.outputs.deploy == 'true'
         run: >
           node tooling/ops/post-deploy-smoke.mjs
@@ -267,7 +268,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
-        run: node tooling/ci/record-deployment.mjs ${{ matrix.worker.worker }} ${{ matrix.worker.origin }} --wrangler-output-env DEPLOY_OUTPUT
+        run: node tooling/ci/record-deployment.mjs ${{ matrix.worker.worker }} ${{ matrix.worker.origin }} --wrangler-output-env DEPLOY_OUTPUT --recipe deploy-workers.yml --smoke-outcome "${{ steps.smoke.outcome }}"
 
   platform:
     name: Deploy platform
@@ -330,7 +331,10 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs platform
+        run: node tooling/ci/plan-deploy.mjs platform --recipe deploy-workers.yml
+      - name: Read this unit's public origin from the register
+        id: target
+        run: node tooling/ci/site-target.mjs --origin platform >> "$GITHUB_OUTPUT"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -385,17 +389,21 @@ jobs:
         if: always()
         run: rm -f "$RUNNER_TEMP/platform-secrets.json"
       - name: Smoke — the live Worker answers at THIS commit
+        id: smoke
         if: steps.plan.outputs.deploy == 'true'
+        env:
+          UNIT_ORIGIN: ${{ steps.target.outputs.origin }}
         run: >
           node tooling/ops/post-deploy-smoke.mjs
-          --url https://platform.nikatru.com/v1/health
+          --url "$UNIT_ORIGIN/v1/health"
           --field build --expect ${{ env.NIKATRU_SHA }} --require-ok
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
-        run: node tooling/ci/record-deployment.mjs platform https://platform.nikatru.com --wrangler-output-env DEPLOY_OUTPUT
+          UNIT_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/ci/record-deployment.mjs platform "$UNIT_ORIGIN" --wrangler-output-env DEPLOY_OUTPUT --recipe deploy-workers.yml --smoke-outcome "${{ steps.smoke.outcome }}"
 
   edge-shield:
     name: Deploy edge-shield
@@ -457,7 +465,10 @@ jobs:
         id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-        run: node tooling/ci/plan-deploy.mjs edge-shield
+        run: node tooling/ci/plan-deploy.mjs edge-shield --recipe deploy-workers.yml
+      - name: Read this unit's public origin from the register
+        id: target
+        run: node tooling/ci/site-target.mjs --origin edge-shield >> "$GITHUB_OUTPUT"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -486,6 +497,7 @@ jobs:
           workingDirectory: services/edge-shield
           command: deploy --var RELEASE:${{ env.NIKATRU_SHA }}
       - name: Smoke — this commit's shield is in path on both routes
+        id: smoke
         if: steps.plan.outputs.deploy == 'true'
         run: node tooling/ops/check-edge-shield.mjs --settle --expect-release ${{ env.NIKATRU_SHA }}
       - name: Apply the zone's per-IP credential rule (tooling/edge-ratelimit-rule.json)
@@ -503,4 +515,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           DEPLOY_OUTPUT: ${{ steps.deploy.outputs.command-output }}
-        run: node tooling/ci/record-deployment.mjs edge-shield https://auth-api.nikatru.com --wrangler-output-env DEPLOY_OUTPUT
+          UNIT_ORIGIN: ${{ steps.target.outputs.origin }}
+        run: node tooling/ci/record-deployment.mjs edge-shield "$UNIT_ORIGIN" --wrangler-output-env DEPLOY_OUTPUT --recipe deploy-workers.yml --smoke-outcome "${{ steps.smoke.outcome }}"
