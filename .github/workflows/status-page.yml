@@ -20,6 +20,9 @@ jobs:
   nikatru-pin:
     name: Pin the private commit this run builds (generated)
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read

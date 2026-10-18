@@ -8,6 +8,8 @@ name: Native auth proof
 run-name: "Native auth proof · ${{ inputs.app }}"
 
 on:
+  schedule:
+    - cron: '16 9 * * 0'
   workflow_dispatch:
     inputs:
       app:
@@ -32,7 +34,7 @@ on:
           - form
 
 concurrency:
-  group: native-auth-proof-${{ inputs.app }}
+  group: native-auth-proof-${{ (github.event.client_payload.event || github.event_name) == 'schedule' && '(schedule)' || inputs.app }}
   cancel-in-progress: false
 
 permissions:
@@ -42,6 +44,9 @@ jobs:
   nikatru-pin:
     name: Pin the private commit this run builds (generated)
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -123,7 +128,7 @@ jobs:
       actions: read
       id-token: write
     outputs:
-      app: ${{ steps.app.outputs.app }}
+      apps: ${{ steps.app.outputs.apps }}
       darwin: ${{ steps.darwin.outputs.darwin }}
     steps:
       - name: Check out the private tree (generated)
@@ -183,27 +188,52 @@ jobs:
         id: app
         env:
           APP_INPUT: ${{ inputs.app }}
+          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT"
-          echo "app=${APP_INPUT}" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = schedule ]; then
+            apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
+          else
+            apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT")"
+          fi
+          echo "apps: ${apps}"
+          echo "apps=${apps}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Did a Darwin input change since this app's last green proof
         id: darwin
         env:
-          APP_INPUT: ${{ inputs.app }}
+          APPS: ${{ steps.app.outputs.apps }}
           GITHUB_TOKEN: ${{ github.token }}
+          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/ci/darwin-inputs.mjs --since-green native-auth-proof.yml --app "$APP_INPUT" > "$RUNNER_TEMP/darwin.txt"
-          cat "$RUNNER_TEMP/darwin.txt"
-          tail -n 1 "$RUNNER_TEMP/darwin.txt" >> "$GITHUB_OUTPUT"
+          darwin=false
+          list="$(jq -r '.[]' <<< "$APPS")"
+          [ -n "$list" ] || { echo "::error title=Darwin inputs::the gate's app set is empty"; exit 1; }
+          for app in $list; do
+            node tooling/ci/darwin-inputs.mjs --since-green native-auth-proof.yml --app "$app" > "$RUNNER_TEMP/darwin.txt"
+            cat "$RUNNER_TEMP/darwin.txt"
+            if [ "$(tail -n 1 "$RUNNER_TEMP/darwin.txt")" != "darwin=false" ]; then darwin=true; fi
+          done
+          echo "darwin=${darwin}" >> "$GITHUB_OUTPUT"
+          # why: ⏱ 2026-10-17 · review of #757 (MAJOR 1). The weekly schedule runs the Darwin legs on
+          # the same rule, so a week with no Darwin input change proves Android, Linux, Windows and web
+          # ONLY, and says so on the run: a green with the iOS/macOS jobs skipped is no proof for an
+          # iOS or macOS row (channel-register.json: a row's nativeAuth cites a green job on ITS format).
+          # Forcing them weekly is ~4 macOS legs per app per week against the macOS ceiling — spend.
+          # ⏱ 2026-10-17 · review of #757 (third review, MAJOR 1): published through `::nikatru-public::` — the shell's
+          # quiet-step echoes nothing else of a green step, so a plain ::notice or a step-summary line never reached the
+          # run. This step is the one public-shell.json publicLines names for this job. The proof itself is the ios /
+          # macos JOB conclusion (skipped here), never this line.
+          if [ "$darwin" = false ]; then
+            echo "::nikatru-public::::notice title=DARWIN NOT PROVEN::no Darwin input changed since the last green proof, so this ${EVENT} run skips the ios and macos jobs and proves the non-Darwin targets only"
+          fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.3 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -223,13 +253,17 @@ jobs:
   android:
     name: Android — emulator, form to Home, adb opens the callback
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
       E2E_PROOF_LOG: native-auth-proof.log
@@ -317,7 +351,7 @@ jobs:
         if: env.PROOF_NEEDS_DEVICE == 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -457,7 +491,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
-          E2E_APP_ID: ${{ needs.gate.outputs.app }}
+          E2E_APP_ID: ${{ matrix.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
           E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped' }}
         run: |
@@ -483,6 +517,10 @@ jobs:
   ios:
     name: iOS — simulator, form to Home, the app opens its own callback
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     if: needs.gate.outputs.darwin == 'true'
     runs-on: macos-26
     timeout-minutes: 60
@@ -490,7 +528,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
       E2E_PROOF_LOG: native-auth-proof.log
@@ -578,7 +616,7 @@ jobs:
         if: env.PROOF_NEEDS_DEVICE == 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -665,13 +703,13 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.ios.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store native-auth-proof-ios-after-open in the bridge's private home (generated)
+      - name: Store native-auth-proof-ios-after-open-${{ matrix.app }} in the bridge's private home (generated)
         if: always() && (steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped')
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/nk-proof-ios-after-open.png
-          NIKATRU_ARTIFACT_NAME: native-auth-proof-ios-after-open
+          NIKATRU_ARTIFACT_NAME: native-auth-proof-ios-after-open-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -684,7 +722,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
-          E2E_APP_ID: ${{ needs.gate.outputs.app }}
+          E2E_APP_ID: ${{ matrix.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
           E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' || steps.proof_form.outcome != 'skipped' }}
         run: |
@@ -710,6 +748,10 @@ jobs:
   macos:
     name: macOS — the .app, form to Home, LaunchServices opens the callback
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     if: needs.gate.outputs.darwin == 'true'
     runs-on: macos-26
     timeout-minutes: 45
@@ -717,7 +759,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
       E2E_PROOF_LOG: native-auth-proof.log
@@ -814,7 +856,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.macos.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -876,7 +918,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
-          E2E_APP_ID: ${{ needs.gate.outputs.app }}
+          E2E_APP_ID: ${{ matrix.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
           E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' }}
         run: |
@@ -902,6 +944,10 @@ jobs:
   windows:
     name: Windows — form to Home (callback needs the MSIX, proven off-runner)
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     runs-on: windows-2025
     timeout-minutes: 45
     permissions:
@@ -911,7 +957,7 @@ jobs:
       run:
         shell: bash
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
       E2E_PROOF_LOG: native-auth-proof.log
@@ -1018,7 +1064,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.windows.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1080,7 +1126,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
-          E2E_APP_ID: ${{ needs.gate.outputs.app }}
+          E2E_APP_ID: ${{ matrix.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
           E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' }}
         run: |
@@ -1106,13 +1152,17 @@ jobs:
   linux:
     name: Linux — the bundle under xvfb, form to Home, xdg-open opens the callback
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
       PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
       E2E_PROOF_LOG: native-auth-proof.log
@@ -1222,7 +1272,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.linux.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1291,7 +1341,7 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_D1_TOKEN || secrets.CLOUDFLARE_API_TOKEN }}
           E2E_USER_ID: ${{ steps.user.outputs.user_id }}
-          E2E_APP_ID: ${{ needs.gate.outputs.app }}
+          E2E_APP_ID: ${{ matrix.app }}
           PLATFORM_D1_DATABASE_ID: ${{ steps.backend.outputs.platform_db }}
           E2E_PROOF_RAN: ${{ steps.proof.outcome != 'skipped' }}
         run: |
@@ -1317,13 +1367,17 @@ jobs:
   android-oauth-return:
     name: Android — emulator, adb hands the app an OAuth return
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
     steps:
       - name: Check out the private tree (generated)
@@ -1409,7 +1463,7 @@ jobs:
         if: env.PROOF_NEEDS_DEVICE == 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1513,6 +1567,10 @@ jobs:
   ios-oauth-return:
     name: iOS — simulator, the app opens its own OAuth return
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     if: needs.gate.outputs.darwin == 'true'
     runs-on: macos-26
     timeout-minutes: 45
@@ -1520,7 +1578,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
     steps:
       - name: Check out the private tree (generated)
@@ -1606,7 +1664,7 @@ jobs:
         if: env.PROOF_NEEDS_DEVICE == 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1648,13 +1706,13 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.ios-oauth-return.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Store native-oauth-return-ios-after-open in the bridge's private home (generated)
+      - name: Store native-oauth-return-ios-after-open-${{ matrix.app }} in the bridge's private home (generated)
         if: always()
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/nk-proof-ios-after-open.png
-          NIKATRU_ARTIFACT_NAME: native-oauth-return-ios-after-open
+          NIKATRU_ARTIFACT_NAME: native-oauth-return-ios-after-open-${{ matrix.app }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -1675,6 +1733,10 @@ jobs:
   macos-oauth-return:
     name: macOS — the .app, LaunchServices hands it an OAuth return
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     if: needs.gate.outputs.darwin == 'true'
     runs-on: macos-26
     timeout-minutes: 45
@@ -1682,7 +1744,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
     steps:
       - name: Check out the private tree (generated)
@@ -1777,7 +1839,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.macos-oauth-return.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1820,6 +1882,10 @@ jobs:
   windows-oauth-return:
     name: Windows — a second copy forwards an OAuth return to the app
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     runs-on: windows-2025
     timeout-minutes: 45
     permissions:
@@ -1829,7 +1895,7 @@ jobs:
       run:
         shell: bash
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
     steps:
       - name: Check out the private tree (generated)
@@ -1934,7 +2000,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.windows-oauth-return.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1977,13 +2043,17 @@ jobs:
   linux-oauth-return:
     name: Linux — the bundle under xvfb, xdg-open hands it an OAuth return
     needs: [nikatru-pin, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        app: ${{ fromJSON(needs.gate.outputs.apps) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
       contents: read
       id-token: write
     env:
-      APP: ${{ needs.gate.outputs.app }}
+      APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
     steps:
       - name: Check out the private tree (generated)
@@ -2091,7 +2161,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.linux-oauth-return.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        working-directory: apps/${{ needs.gate.outputs.app }}
+        working-directory: apps/${{ matrix.app }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

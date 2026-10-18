@@ -35,6 +35,9 @@ jobs:
     name: Pin the private commit this run builds (generated)
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -423,6 +426,9 @@ jobs:
     needs: [dry-run]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -573,6 +579,9 @@ jobs:
     needs: [dry-run, nikatru-collect]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 15
     permissions:
       contents: read

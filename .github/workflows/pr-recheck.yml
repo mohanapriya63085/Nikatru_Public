@@ -21,6 +21,9 @@ jobs:
   nikatru-recheck:
     name: Re-run only ci-gate of the run that judged the PR's head (generated)
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 20
     steps:
       - name: Re-run only ci-gate (generated)

@@ -66,6 +66,9 @@ jobs:
     name: Pin the private commit this run builds (generated)
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1347,6 +1350,7 @@ jobs:
     permissions:
       contents: write
       actions: read
+      checks: read
       pull-requests: read
       deployments: write
     outputs:
@@ -2969,6 +2973,9 @@ jobs:
     needs: [ci, e2e-suite, e2e-branded, release, attest, store-publish, cws-token-keepalive, store-key-keepalive, scheduled-proof-fresh, extensions-lane-accounting]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -3119,6 +3126,9 @@ jobs:
     needs: [ci, e2e-suite, e2e-branded, release, attest, store-publish, cws-token-keepalive, store-key-keepalive, scheduled-proof-fresh, extensions-lane-accounting, nikatru-collect]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 15
     permissions:
       contents: read

@@ -1206,7 +1206,6 @@ jobs:
     if: needs.detect.outputs.affected == 'true'
     runs-on: windows-11-arm
     timeout-minutes: 30
-    continue-on-error: true
     permissions:
       contents: read
     needs: [detect, prepare]
@@ -1268,7 +1267,6 @@ jobs:
           USERDOMAIN: ${{ steps.nikatru-key-account.outputs.domain }}
           USERNAME: ${{ steps.nikatru-key-account.outputs.user }}
           PATH: ${{ steps.nikatru-key-account.outputs.path }}
-        timeout-minutes: 2
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -1337,11 +1335,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        timeout-minutes: 6
         with:
           cache: 'false'
       - name: Git may write paths past MAX_PATH
-        timeout-minutes: 1
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.3 --default-shell {0}
         run: |
           git config --global core.longpaths true
@@ -1357,7 +1353,6 @@ jobs:
           }
           exit $LASTEXITCODE
       - name: Derive the release line from pubspec
-        timeout-minutes: 1
         id: ver
         shell: bash
         run: |
@@ -1368,13 +1363,11 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Build windows
-        timeout-minutes: 14
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.6 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
       - name: Package MSIX (arm64)
-        timeout-minutes: 1
         working-directory: apps/${{ matrix.app }}
         shell: bash
         run: |
@@ -1386,7 +1379,6 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-artifacts.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: The MSIX carries the identity the register declares and says arm64, and every artifact this lane claims exists
-        timeout-minutes: 1
         shell: bash
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1417,9 +1409,169 @@ jobs:
           key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-build.windows-artifacts.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
+  windows-x64-artifacts:
+    name: Windows x64 artifacts (built, inspected, discarded)
+    if: needs.detect.outputs.affected == 'true'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    continue-on-error: true
+    permissions:
+      contents: read
+    needs: [detect, prepare]
+    strategy:
+      fail-fast: true
+      matrix:
+        app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+        timeout-minutes: 2
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        timeout-minutes: 6
+        with:
+          cache: 'false'
+      - name: Git may write paths past MAX_PATH
+        timeout-minutes: 1
+        shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-x64-artifacts.3 --default-shell {0}
+        run: |
+          git config --global core.longpaths true
+          git config --global --get core.longpaths
+      - name: Resolve the workspace
+        timeout-minutes: 2
+        shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-x64-artifacts.4 --default-shell {0}
+        run: flutter pub get --enforce-lockfile
+      - name: Derive the release line from pubspec
+        timeout-minutes: 1
+        id: ver
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-x64-artifacts.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Build windows
+        timeout-minutes: 14
+        env:
+          RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
+        shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-x64-artifacts.6 --default-shell {0}
+        run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} windows windows-store --lane pr
+      - name: Package MSIX (Microsoft Store)
+        timeout-minutes: 1
+        working-directory: apps/${{ matrix.app }}
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          dart run msix:create --version=${{ steps.ver.outputs.release_line }}.${{ github.run_number }}.0
+          node ../../tooling/store/msix-visual-name.mjs --app ${{ matrix.app }} build/windows/msix/${{ matrix.app }}.msix
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-x64-artifacts.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: The MSIX carries the identity the register declares and says x64, and every artifact this lane claims exists
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-artifact-signed-msix.mjs --app ${{ matrix.app }} --arch x64 apps/${{ matrix.app }}/build/windows/msix/${{ matrix.app }}.msix
+          node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform windows
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.windows-x64-artifacts.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-build.windows-x64-artifacts.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-build.windows-x64-artifacts.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
   lane-verdict:
     name: lane-verdict
-    needs: [detect, prepare, app-dryrun, android-artifacts, web-artifacts, linux-artifacts, windows-artifacts]
+    needs: [detect, prepare, app-dryrun, android-artifacts, web-artifacts, linux-artifacts, windows-artifacts, windows-x64-artifacts]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

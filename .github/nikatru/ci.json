@@ -14,6 +14,13 @@
   },
   "lanes": [
     {
+      "job": "first-pass",
+      "context": "ci/first-pass",
+      "members": [
+        "ci.first-pass."
+      ]
+    },
+    {
       "job": "lane-workers",
       "context": "ci/lane-workers",
       "members": [

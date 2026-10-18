@@ -41,6 +41,9 @@ jobs:
     name: Wait for a reviewer before unmerged code meets production credentials (generated)
     if: github.event_name == 'repository_dispatch'
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 5
     environment: store-publish
     permissions:
@@ -64,6 +67,9 @@ jobs:
     needs: [nikatru-approve]
     if: always() && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !(github.event_name == 'repository_dispatch')))
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -866,7 +872,7 @@ jobs:
           enableCrossOsArchive: true
 
   native:
-    name: Native leg — ${{ matrix.target }} (${{ matrix.app }})
+    name: Native leg${{ (inputs.pending_flows || 'skip') == 'skip' && ' (sign-in only)' || '' }} — ${{ matrix.target }} (${{ matrix.app }})
     needs: [nikatru-pin, prepare]
     if: needs.nikatru-pin.result == 'success' && (github.event.schedule == '43 4 * * 0')
     runs-on: ${{ matrix.os }}
@@ -1538,6 +1544,9 @@ jobs:
     needs: [prepare, e2e]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1688,6 +1697,9 @@ jobs:
     needs: [prepare, e2e, nikatru-collect]
     if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
     timeout-minutes: 15
     permissions:
       contents: read
