@@ -9,6 +9,15 @@ on:
   schedule:
     - cron: '11,26,41,56 * * * *'
   workflow_dispatch:
+    inputs:
+      gate_mode:
+        description: 'strict (default) gates the dispatched head; newest-green builds the newest main commit whose ci-gate passed'
+        required: false
+        default: strict
+        type: choice
+        options:
+          - strict
+          - newest-green
 
 permissions: {}
 
@@ -167,10 +176,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          GATE_MODE: ${{ inputs.gate_mode }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha
+          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --gate-mode "$GATE_MODE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name status-page.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
