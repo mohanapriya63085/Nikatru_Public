@@ -288,6 +288,7 @@ jobs:
           node tooling/app-yaml/render.mjs
           node --single-threaded tooling/store/render-linux-icons.mjs
           node tooling/app-yaml/render-privacy.mjs
+          node docs/platform/digilocker/app/bin/render-apps.mjs
           rm -f sites/_shared/_data/apps.json
           node tooling/sites/generate-apps-data.mjs
           rm -f catalog/apps-landing.json
