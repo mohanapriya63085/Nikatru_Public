@@ -1762,3 +1762,23 @@ jobs:
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
           NIKATRU_RESULTS: '{"prepare": "${{ needs.prepare.result }}", "e2e": "${{ needs.e2e.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/e2e.json
+
+  nikatru-relay:
+    name: Start the workflows that follow this run (generated)
+    needs: [nikatru-approve, nikatru-pin, prepare, e2e, native, reset-revokes, alert, nikatru-ran, nikatru-collect, nikatru-report]
+    if: always() && !github.event.client_payload.pr
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+    steps:
+      - name: Start autopilot-watch.yml after this run (generated)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_RELAY_RUN: ${{ github.run_id }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN"

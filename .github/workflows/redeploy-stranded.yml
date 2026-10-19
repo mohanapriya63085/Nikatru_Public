@@ -6,11 +6,13 @@ env:
 name: Redeploy stranded lanes
 
 on:
-  workflow_run:
-    workflows: [CI, Build apps]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      nikatru_relay_run:
+        description: The shell run that started this one (generated; empty is a person dispatching it).
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: redeploy-stranded
@@ -22,7 +24,6 @@ permissions:
 jobs:
   recover:
     name: Re-enter a deploy lane its own gate stranded
-    if: "(github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #'))"
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -83,6 +84,21 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+      - name: Wait for the run that started this one to complete (generated)
+        if: inputs.nikatru_relay_run != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_RELAY_RUN: ${{ inputs.nikatru_relay_run }}
+        run: |
+          case "$NIKATRU_RELAY_RUN" in ''|*[!0-9]*) echo "::error::nikatru_relay_run is not a run id"; exit 1;; esac
+          for _ in $(seq 1 36); do
+            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NIKATRU_RELAY_RUN" --jq .status)" || status=unread
+            if [ "$status" = completed ]; then echo "run $NIKATRU_RELAY_RUN completed"; exit 0; fi
+            sleep 5
+          done
+          echo "::error::run $NIKATRU_RELAY_RUN did not complete in 180 s (its last status: $status)"
+          exit 1
       - name: Re-enter every lane stranded by a red ci-gate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -111,7 +127,7 @@ jobs:
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
     needs: [recover]
-    if: "(github.event_name != 'workflow_run' || (github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event != 'pull_request' && !contains(github.event.workflow_run.display_title, '(PR #'))) && (github.event_name != 'workflow_run' || github.event.workflow_run.name != 'CI' || !contains(github.event.workflow_run.display_title, ' (PR #')) && !cancelled() && github.event_name != 'workflow_run'"
+    if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
       run:

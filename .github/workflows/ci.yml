@@ -1338,3 +1338,35 @@ jobs:
           NIKATRU_P_REF: ${{ github.event.client_payload.ref }}
           NIKATRU_RESULTS: '{"platform-db-migrate": "${{ needs.platform-db-migrate.result }}", "deploy-web": "${{ needs.deploy-web.result }}", "money-sandbox": "${{ needs.money-sandbox.result }}", "money-gate": "${{ needs.money-gate.result }}", "deploy-workers": "${{ needs.deploy-workers.result }}"}'
         run: /usr/bin/python3 -I .github/nikatru/report.py send .github/nikatru/ci-deploys.json
+
+  nikatru-relay:
+    name: Start the workflows that follow this run (generated)
+    needs: [nikatru-pin, first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate, platform-db-migrate, deploy-web, money-plan, money-sandbox, money-gate, deploy-workers, nikatru-ran, nikatru-collect, nikatru-report, nikatru-collect-deploys, nikatru-report-deploys]
+    if: always() && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && github.event.client_payload.event != 'pull_request'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      actions: write
+    steps:
+      - name: Start autopilot-watch.yml after this run (generated)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_RELAY_RUN: ${{ github.run_id }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN"
+      - name: Start main-healthy.yml after this run (generated)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_RELAY_RUN: ${{ github.run_id }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/main-healthy.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start main-healthy.yml after run $NIKATRU_RELAY_RUN"
+      - name: Start redeploy-stranded.yml after this run (generated)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_RELAY_RUN: ${{ github.run_id }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN"
