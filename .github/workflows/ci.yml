@@ -921,6 +921,36 @@ jobs:
     with:
       nikatru_sha: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
 
+  nikatru-ran:
+    name: Fail this run if it ran nothing (generated)
+    needs: [first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate, platform-db-migrate, deploy-web, money-plan, money-sandbox, money-gate, deploy-workers]
+    if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && github.event.client_payload.ref == 'refs/heads/main') || github.event.client_payload.event == 'pull_request') && !cancelled() && github.event_name != 'repository_dispatch'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out nothing of the private tree but its issue templates (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Fail when every job of this run was skipped (generated)
+        shell: bash
+        env:
+          NIKATRU_RESULTS: first-pass=${{ needs.first-pass.result }} lane-workers=${{ needs.lane-workers.result }} lane-guards=${{ needs.lane-guards.result }} lane-sites=${{ needs.lane-sites.result }} lane-apps=${{ needs.lane-apps.result }} lane-build=${{ needs.lane-build.result }} extensions=${{ needs.extensions.result }} ci-gate=${{ needs.ci-gate.result }} platform-db-migrate=${{ needs.platform-db-migrate.result }} deploy-web=${{ needs.deploy-web.result }} money-plan=${{ needs.money-plan.result }} money-sandbox=${{ needs.money-sandbox.result }} money-gate=${{ needs.money-gate.result }} deploy-workers=${{ needs.deploy-workers.result }}
+        run: |
+          for r in $NIKATRU_RESULTS; do
+            if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
+          done
+          echo "::error::ran nothing: every job of this $GITHUB_EVENT_NAME run was skipped ($NIKATRU_RESULTS), so a green run would claim work that never ran. If a generated job before them failed, that failure is the cause. A workflow whose no-op run is legitimate is named in tooling/ci/public-shell.json noopRuns."
+          exit 1
+
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
     needs: [first-pass, lane-workers, lane-guards, lane-sites, lane-apps, lane-build, extensions, ci-gate]
