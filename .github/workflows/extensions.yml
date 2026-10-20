@@ -2155,6 +2155,12 @@ jobs:
           fi
           echo "id=${TAG%%-v*}"     >> "$GITHUB_OUTPUT"
           echo "version=${TAG#*-v}" >> "$GITHUB_OUTPUT"
+      - name: The [10]D-6 cadence cap allows one more store submission this month
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TOOL: ${{ steps.tag.outputs.id }}
+        run: node tooling/ci/assert-submission-safety.mjs . --submitting --extension "$TOOL" --ledger-from-github --count 1
       - name: Download the tag's Release assets
         shell: bash
         env:

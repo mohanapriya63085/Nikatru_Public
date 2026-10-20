@@ -36,7 +36,11 @@
 //     tooling/ci/shell-report.py cuts first. PR #429's run 38262466034 handed over a tail of passing lines
 //     and named none of its ten failures. A red step with no failing test in its output keeps the old layout;
 //   · exits with the command's code, so `continue-on-error`, `if: failure()` and
-//     the job verdict are what they were.
+//     the job verdict are what they were;
+//   · ⏱ 2026-10-08 (A2 review G-22): ends when the command EXITS, not when its
+//     output pipes reach EOF — a grandchild left holding them hung the step to
+//     its timeout-minutes with an empty log. The pipes get DRAIN_MS after the
+//     exit, then are cut, and the capture says so.
 //
 //   node tooling/ci/quiet-step.mjs --name <name> [--public] -- <cmd> [args...]
 //   node tooling/ci/quiet-step.mjs --name <name> [--public] --default-shell <script-file>
@@ -389,7 +393,7 @@ export function parseArgs(argv) {
 }
 
 /**
- * Runs the step. Returns {code, line}. `io` is for tests: {env, tempDir, stdout, drainMs}.
+ * Runs the step. Returns {code, line}. `io` is for tests: {env, tempDir, stdout, platform, drainMs}.
  */
 export async function runQuiet(opts, io = {}) {
   const env = io.env ?? process.env;
