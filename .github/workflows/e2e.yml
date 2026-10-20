@@ -872,7 +872,7 @@ jobs:
           enableCrossOsArchive: true
 
   native:
-    name: Native leg${{ (inputs.pending_flows || 'skip') == 'skip' && ' (sign-in only)' || '' }} — ${{ matrix.target }} (${{ matrix.app }})
+    name: Native leg — ${{ matrix.target }} (${{ matrix.app }})
     needs: [nikatru-pin, prepare]
     if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.prepare.result == 'success' && (github.event.schedule == '43 4 * * 0')
     runs-on: ${{ matrix.os }}
@@ -927,7 +927,7 @@ jobs:
       TARGET: ${{ matrix.target }}
       SIGN_IN: ${{ matrix.sign_in }}
       TAP: ${{ matrix.tap }}
-      PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+      PENDING_FLOWS: run
       DEVICE: ${{ matrix.device }}
       CALLBACK: ${{ matrix.callback }}
       REFUSAL_ANCHOR: ${{ needs.prepare.outputs.refusal_anchor }}

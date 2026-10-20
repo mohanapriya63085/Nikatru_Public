@@ -17,13 +17,13 @@ on:
         required: true
         type: string
       pending_flows:
-        description: 'skip (default): the core flow is parked and said. run: walk it.'
+        description: 'run (default): walk the core flow. skip: skip it and say so (sign-in only).'
         type: choice
         required: false
-        default: skip
+        default: run
         options:
-          - skip
           - run
+          - skip
       sign_in:
         description: 'token (default): the harness session. form: the phones run the positive leg (--expect-sign-in) — the only proof a nativeAuth flip may cite.'
         type: choice
@@ -265,7 +265,7 @@ jobs:
     env:
       APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
-      PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+      PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
     steps:
       - name: Check out the private tree (generated)
@@ -530,7 +530,7 @@ jobs:
     env:
       APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
-      PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+      PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
     steps:
       - name: Check out the private tree (generated)
@@ -761,7 +761,7 @@ jobs:
     env:
       APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
-      PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+      PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
     steps:
       - name: Check out the private tree (generated)
@@ -959,7 +959,7 @@ jobs:
     env:
       APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
-      PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+      PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
     steps:
       - name: Check out the private tree (generated)
@@ -1164,7 +1164,7 @@ jobs:
     env:
       APP: ${{ matrix.app }}
       PROOF_NEEDS_DEVICE: 'true'
-      PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+      PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
       E2E_PROOF_LOG: native-auth-proof.log
     steps:
       - name: Check out the private tree (generated)
