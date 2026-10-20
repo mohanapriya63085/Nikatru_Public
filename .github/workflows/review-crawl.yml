@@ -18,7 +18,7 @@ on:
         options: [all, routes, buttons]
         default: all
       matrix:
-        description: 'all | smoke | viewport:scheme:locale,... (viewport desktop|phone, scheme light|dark, locale en|long|rtl|posix; * for any)'
+        description: 'all | smoke | viewport:scheme:locale,... (viewport desktop|phone|tablet, scheme light|dark, locale en|<a served code>|long|rtl|posix; * for any)'
         type: string
         default: smoke
       private_pr:
@@ -512,6 +512,14 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+      - name: Give the demo build the pseudo right-to-left locale
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/i18n/pseudo-arb.mjs --demo-build ${{ matrix.app }}
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -519,7 +527,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Derive the release line from pubspec
         id: ver
         run: |
@@ -528,7 +536,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve this app's base href from the catalogue
         id: base
         run: |
@@ -537,7 +545,7 @@ jobs:
           node tooling/ci/assert-catalog-reachable.mjs --emit-base-href ${{ matrix.app }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build web (the demo build, backend blanked)
         env:
           BASE_HREF: ${{ steps.base.outputs.base_href }}
@@ -549,7 +557,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} web web --lane pr
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -571,7 +579,7 @@ jobs:
           node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.app }}/build/web
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Fingerprint the heavy assets (content-hashed names, as deployed)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -579,7 +587,7 @@ jobs:
           node tooling/web/fingerprint-web-build.mjs apps/${{ matrix.app }}/build/web
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.build-demo.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stage review-crawl-demo-web-${{ matrix.app }} for this run's later jobs (generated)
         id: nikatru-stage-1
         shell: bash
@@ -1009,6 +1017,15 @@ jobs:
         uses: ./.nikatru-trusted/.github/actions/setup-flutter
         with:
           cache: 'false'
+      - name: Give the demo build the pseudo right-to-left locale (branch run)
+        if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/i18n/pseudo-arb.mjs --demo-build ${{ matrix.cell.target }}
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve the workspace (branch run)
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
         run: |
@@ -1017,7 +1034,7 @@ jobs:
           flutter pub get --enforce-lockfile
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Derive the release line from pubspec (branch run)
         id: ver
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
@@ -1027,7 +1044,7 @@ jobs:
           node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.cell.target }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Resolve this app's base href from the catalogue (branch run)
         id: base
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
@@ -1037,7 +1054,7 @@ jobs:
           node tooling/ci/assert-catalog-reachable.mjs --emit-base-href ${{ matrix.cell.target }} >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The demo build, on a branch run (backend blanked)
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
         env:
@@ -1050,7 +1067,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.cell.target }} web web --lane pr
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Self-host the engine's fallback fonts, pinned by sha256 (branch run)
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
         run: |
@@ -1059,7 +1076,7 @@ jobs:
           node tooling/web/self-host-fallback-fonts.mjs apps/${{ matrix.cell.target }}/build/web
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Fingerprint the heavy assets (branch run)
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' && needs.gate.result == 'success'
         run: |
@@ -1068,7 +1085,7 @@ jobs:
           node tooling/web/fingerprint-web-build.mjs apps/${{ matrix.cell.target }}/build/web
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The previous run's index for this cell (the diff's baseline)
         if: (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
@@ -1102,7 +1119,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Split the cell's review into bundles under the bridge cap
         if: always()
         run: |
@@ -1111,7 +1128,7 @@ jobs:
           node tooling/ops/review-crawl-bundles.mjs --in "$RUNNER_TEMP/review-crawl" --out "$RUNNER_TEMP/review-crawl-bundles"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store review-crawl-${{ matrix.cell.id }} in the bridge's private home (generated)
         if: always()
         shell: bash
@@ -1170,7 +1187,7 @@ jobs:
           if [ -f "$b" ] && node -e 'const i=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")); process.exit(i.stoppedBy ? 1 : 0)' "$b"; then cp "$b" "$RUNNER_TEMP/baseline/index.json"; echo "saved=true" >> "$GITHUB_OUTPUT"; else echo "::notice title=Review crawl baseline::no baseline from this run (stopped by live safety, or no index), so the previous baseline is kept"; fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - if: always() && steps.keep.outputs.saved == 'true' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
