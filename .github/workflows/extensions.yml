@@ -1858,6 +1858,54 @@ jobs:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}
           enableCrossOsArchive: true
+      - name: Confirm the release-dist-${{ steps.tag.outputs.id }} hand-off is in the cache (generated)
+        id: nikatru-saved-1-1
+        if: ${{ (inputs.dry_run != true) && steps.nikatru-seal-1.outcome == 'success' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: "Hand off release-dist-${{ steps.tag.outputs.id }} again, as -r2: no save was confirmed (generated)"
+        if: ${{ (inputs.dry_run != true) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}-r2
+          enableCrossOsArchive: true
+      - name: Confirm the release-dist-${{ steps.tag.outputs.id }} hand-off is in the cache as -r2 (generated)
+        id: nikatru-saved-1-2
+        if: ${{ (inputs.dry_run != true) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}-r2
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: "Hand off release-dist-${{ steps.tag.outputs.id }} again, as -r3: no save was confirmed (generated)"
+        if: ${{ (inputs.dry_run != true) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' && steps.nikatru-saved-1-2.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}-r3
+          enableCrossOsArchive: true
+      - name: Confirm the release-dist-${{ steps.tag.outputs.id }} hand-off is in the cache as -r3 (generated)
+        id: nikatru-saved-1-3
+        if: ${{ (inputs.dry_run != true) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' && steps.nikatru-saved-1-2.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}-r3
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Fail when no release-dist-${{ steps.tag.outputs.id }} hand-off save was confirmed (generated)
+        id: nikatru-unsaved-1
+        if: ${{ (inputs.dry_run != true) && steps.nikatru-seal-1.outcome == 'success' && steps.nikatru-saved-1-1.outputs.cache-hit != 'true' && steps.nikatru-saved-1-2.outputs.cache-hit != 'true' && steps.nikatru-saved-1-3.outputs.cache-hit != 'true' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-release-dist-${{ steps.tag.outputs.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: The register must be able to name where this ships
         if: (github.event.client_payload.event || github.event_name) == 'push'
         working-directory: .
