@@ -5,6 +5,8 @@ env:
 
 name: Money sandbox E2E
 
+run-name: "Money sandbox E2E${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+
 on:
   workflow_dispatch:
     inputs:

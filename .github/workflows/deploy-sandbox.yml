@@ -5,6 +5,8 @@ env:
 
 name: Deploy sandbox
 
+run-name: "Deploy sandbox${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+
 on:
   workflow_dispatch:
     inputs:
