@@ -119,7 +119,7 @@ jobs:
     needs: [nikatru-pin]
     name: Require ci-gate to have passed
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 50
     outputs:
       app: ${{ steps.app.outputs.app }}
     permissions:
@@ -187,7 +187,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }}
+          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --timeout-seconds 2700
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
