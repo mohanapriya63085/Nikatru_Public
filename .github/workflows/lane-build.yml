@@ -1050,7 +1050,6 @@ jobs:
     if: needs.detect.outputs.affected == 'true'
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 20
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
     permissions:
       contents: read
     needs: [detect, prepare]
@@ -1067,7 +1066,6 @@ jobs:
           ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -1132,11 +1130,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 4 || 20 }}
         with:
           cache: ${{ matrix.arch == 'arm64' && 'false' || 'true' }}
       - name: Linux build deps
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 3 || 20 }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.3 --default-shell {0}
         run: |
           sudo apt-get update
@@ -1144,22 +1140,18 @@ jobs:
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
       - name: Resolve the workspace
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 2 || 20 }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.4 --default-shell {0}
         run: flutter pub get --enforce-lockfile
       - name: Derive the release line from pubspec
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
         id: ver
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.5 --default-shell {0}
         run: node tooling/ci/assert-app-versioning.mjs --emit apps/${{ matrix.app }} >> "$GITHUB_OUTPUT"
       - name: Build linux
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 4 || 20 }}
         env:
           RELEASE_LINE: ${{ steps.ver.outputs.release_line }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.6 --default-shell {0}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} linux linux-snap --lane pr
       - name: Generate the snapcraft recipe
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.7 --default-shell {0}
         run: >
           node tooling/release/generate-snapcraft.mjs
@@ -1168,14 +1160,12 @@ jobs:
           --out "$RUNNER_TEMP/snapcraft-${{ matrix.app }}"
           --version ${{ steps.ver.outputs.release_line }}.${{ github.run_number }}
       - name: The generated recipe is complete and still derived from the tree
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.8 --default-shell {0}
         run: >
           node tooling/ci/assert-snapcraft-generable.mjs
           --emitted "$RUNNER_TEMP/snapcraft-${{ matrix.app }}/snap/snapcraft.yaml"
           --app ${{ matrix.app }}
       - name: Every artifact this lane claims exists, and is not empty
-        timeout-minutes: ${{ matrix.arch == 'arm64' && 1 || 20 }}
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.9 --default-shell {0}
         run: >
           node tooling/ci/assert-artifact-shape.mjs
@@ -1414,7 +1404,6 @@ jobs:
     if: needs.detect.outputs.affected == 'true'
     runs-on: windows-2025
     timeout-minutes: 30
-    continue-on-error: true
     permissions:
       contents: read
     needs: [detect, prepare]
