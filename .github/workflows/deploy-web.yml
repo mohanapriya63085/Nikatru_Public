@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 2511182fc3f198c295f1d0cd820939b3581e141ceb81262dab18d99506679cc1
+  NIKATRU_SHELL_FINGERPRINT: 0c34e9a8b9f014604813feb5adf955a965f7d7a8b3b4f31f2b46382f26fee4eb
 
 name: Part of CI · Deploy web
 
@@ -641,6 +641,14 @@ jobs:
           PAGES_DEPLOYMENT_ID: ${{ steps.deploy.outputs.pages-deployment-id }}
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
         run: node tooling/ci/record-deployment.mjs nikatru-site "$SITE_ORIGIN" --pages-deployment-id "$PAGES_DEPLOYMENT_ID" --recipe deploy-web.yml --smoke-outcome "${{ steps.smoke.outcome }}"
+      - name: Announce the changed pages to IndexNow
+        if: steps.smoke.outcome == 'success'
+        timeout-minutes: 5
+        env:
+          LAST_SUCCESS: ${{ steps.plan.outputs.last_success }}
+          SITE_SOURCE: ${{ steps.target.outputs.source }}
+          SITE_HOSTNAME: ${{ steps.target.outputs.hostname }}
+        run: node tooling/sites/indexnow-ping.mjs --root "$SITE_SOURCE" --host "$SITE_HOSTNAME" --base "$LAST_SUCCESS" --ping
       - name: Live — nikatru.com serves the ledger's commit, and its Function answers
         if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
         env:
