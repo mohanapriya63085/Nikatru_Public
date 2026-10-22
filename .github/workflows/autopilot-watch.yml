@@ -15,6 +15,11 @@ on:
         required: false
         default: ''
         type: string
+      nikatru_relay_attempt:
+        description: That run's attempt (generated; empty is its newest).
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: autopilot-watch
@@ -160,19 +165,34 @@ jobs:
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
       - name: Wait for the run that started this one to complete (generated)
+        id: nikatru-relay-wait
         if: inputs.nikatru_relay_run != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ inputs.nikatru_relay_run }}
+          NIKATRU_RELAY_ATTEMPT: ${{ inputs.nikatru_relay_attempt }}
         run: |
           case "$NIKATRU_RELAY_RUN" in ''|*[!0-9]*) echo "::error::nikatru_relay_run is not a run id"; exit 1;; esac
+          run="repos/$GITHUB_REPOSITORY/actions/runs/$NIKATRU_RELAY_RUN"
+          if [ -z "$NIKATRU_RELAY_ATTEMPT" ]; then NIKATRU_RELAY_ATTEMPT="$(gh api "$run" --jq .run_attempt)" || NIKATRU_RELAY_ATTEMPT=; fi
+          case "$NIKATRU_RELAY_ATTEMPT" in ''|0|*[!0-9]*) echo "::error::nikatru_relay_attempt '$NIKATRU_RELAY_ATTEMPT' is not an attempt of run $NIKATRU_RELAY_RUN"; exit 1;; esac
+          status=unread
           for _ in $(seq 1 36); do
-            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NIKATRU_RELAY_RUN" --jq .status)" || status=unread
-            if [ "$status" = completed ]; then echo "run $NIKATRU_RELAY_RUN completed"; exit 0; fi
+            status="$(gh api "$run/attempts/$NIKATRU_RELAY_ATTEMPT" --jq .status)" || status=unread
+            if [ "$status" = completed ]; then
+              newest="$(gh api "$run" --jq '"\(.run_attempt) \(.status)"')" || newest=unread
+              case "$newest" in
+                "$NIKATRU_RELAY_ATTEMPT "*) echo "run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT completed"; exit 0;;
+                [0-9]*)
+                  echo "attempt $NIKATRU_RELAY_ATTEMPT superseded by attempt ${newest%% *}, ${newest#* }: the relay for ${newest%% *} decides"
+                  echo "superseded=true" >> "$GITHUB_OUTPUT"
+                  exit 0;;
+              esac
+            fi
             sleep 5
           done
-          echo "::error::run $NIKATRU_RELAY_RUN did not complete in 180 s (its last status: $status)"
+          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in 180 s (its last status: $status)"
           exit 1
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -188,7 +208,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        if: steps.nikatru-relay-wait.outputs.superseded != 'true'
       - name: One watch pass
+        if: steps.nikatru-relay-wait.outputs.superseded != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BRIDGE_WATCH_SECRET: ${{ secrets.BRIDGE_WATCH_SECRET }}
@@ -273,19 +295,34 @@ jobs:
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
       - name: Wait for the run that started this one to complete (generated)
+        id: nikatru-relay-wait
         if: inputs.nikatru_relay_run != ''
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ inputs.nikatru_relay_run }}
+          NIKATRU_RELAY_ATTEMPT: ${{ inputs.nikatru_relay_attempt }}
         run: |
           case "$NIKATRU_RELAY_RUN" in ''|*[!0-9]*) echo "::error::nikatru_relay_run is not a run id"; exit 1;; esac
+          run="repos/$GITHUB_REPOSITORY/actions/runs/$NIKATRU_RELAY_RUN"
+          if [ -z "$NIKATRU_RELAY_ATTEMPT" ]; then NIKATRU_RELAY_ATTEMPT="$(gh api "$run" --jq .run_attempt)" || NIKATRU_RELAY_ATTEMPT=; fi
+          case "$NIKATRU_RELAY_ATTEMPT" in ''|0|*[!0-9]*) echo "::error::nikatru_relay_attempt '$NIKATRU_RELAY_ATTEMPT' is not an attempt of run $NIKATRU_RELAY_RUN"; exit 1;; esac
+          status=unread
           for _ in $(seq 1 36); do
-            status="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$NIKATRU_RELAY_RUN" --jq .status)" || status=unread
-            if [ "$status" = completed ]; then echo "run $NIKATRU_RELAY_RUN completed"; exit 0; fi
+            status="$(gh api "$run/attempts/$NIKATRU_RELAY_ATTEMPT" --jq .status)" || status=unread
+            if [ "$status" = completed ]; then
+              newest="$(gh api "$run" --jq '"\(.run_attempt) \(.status)"')" || newest=unread
+              case "$newest" in
+                "$NIKATRU_RELAY_ATTEMPT "*) echo "run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT completed"; exit 0;;
+                [0-9]*)
+                  echo "attempt $NIKATRU_RELAY_ATTEMPT superseded by attempt ${newest%% *}, ${newest#* }: the relay for ${newest%% *} decides"
+                  echo "superseded=true" >> "$GITHUB_OUTPUT"
+                  exit 0;;
+              esac
+            fi
             sleep 5
           done
-          echo "::error::run $NIKATRU_RELAY_RUN did not complete in 180 s (its last status: $status)"
+          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in 180 s (its last status: $status)"
           exit 1
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -301,7 +338,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        if: steps.nikatru-relay-wait.outputs.superseded != 'true'
       - name: Dispatch E2E live when the deployed head is not proven
+        if: steps.nikatru-relay-wait.outputs.superseded != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BRIDGE_WATCH_SECRET: ${{ secrets.BRIDGE_WATCH_SECRET }}

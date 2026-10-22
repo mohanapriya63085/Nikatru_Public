@@ -22,10 +22,10 @@ on:
           - production
           - selfhosted
       pending_flows:
-        description: 'skip (default): the parked flows are skipped and said. run: walk them (dispatch on a branch).'
+        description: 'run (default): walk the changed flows. skip: skip them and say so.'
         type: choice
         required: false
-        default: skip
+        default: run
         options:
           - skip
           - run
@@ -557,7 +557,7 @@ jobs:
           E2E_TOKEN_HASH: ${{ steps.user.outputs.token_hash }}
           E2E_DELETE_TOKEN_HASH: ${{ steps.delete_user.outputs.token_hash }}
           E2E_APP_ID: ${{ matrix.app }}
-          E2E_PENDING_FLOWS: ${{ inputs.pending_flows || 'skip' }}
+          E2E_PENDING_FLOWS: ${{ inputs.pending_flows || 'run' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -713,7 +713,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name e2e.e2e.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The exported CSV holds the rows the server held
-        if: steps.drive.outcome == 'success' && (inputs.pending_flows || 'skip') == 'run'
+        if: steps.drive.outcome == 'success' && (inputs.pending_flows || 'run') == 'run'
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1781,4 +1781,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN"
+          NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"

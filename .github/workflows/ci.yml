@@ -1357,16 +1357,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN"
+          NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/autopilot-watch.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start autopilot-watch.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
       - name: Start main-healthy.yml after this run (generated)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/main-healthy.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start main-healthy.yml after run $NIKATRU_RELAY_RUN"
+          NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/main-healthy.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start main-healthy.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
       - name: Start redeploy-stranded.yml after this run (generated)
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           NIKATRU_RELAY_RUN: ${{ github.run_id }}
-        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN"
+          NIKATRU_RELAY_ATTEMPT: ${{ github.run_attempt }}
+        run: gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/redeploy-stranded.yml/dispatches" -f ref=main -f "inputs[nikatru_relay_run]=$NIKATRU_RELAY_RUN" -f "inputs[nikatru_relay_attempt]=$NIKATRU_RELAY_ATTEMPT" --silent || echo "::warning::could not start redeploy-stranded.yml after run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT"
