@@ -351,6 +351,7 @@ jobs:
         timeout-minutes: 10
         with:
           cache: 'false'
+          android-ndk: 'true'
       - name: Resolve the workspace
         timeout-minutes: 5
         run: |

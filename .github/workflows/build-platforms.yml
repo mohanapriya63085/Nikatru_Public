@@ -447,6 +447,8 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        with:
+          android-ndk: 'true'
       - name: Linux build deps
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"

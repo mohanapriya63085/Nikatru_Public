@@ -349,6 +349,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          android-ndk: 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
         working-directory: apps/${{ matrix.app }}
@@ -1461,6 +1463,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          android-ndk: 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
         working-directory: apps/${{ matrix.app }}

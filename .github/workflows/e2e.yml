@@ -1020,6 +1020,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          android-ndk: ${{ matrix.target == 'android' }}
       - name: Git may write paths past MAX_PATH
         if: env.PROOF_NEEDS_DEVICE == 'true' && (matrix.target == 'windows')
         run: |
