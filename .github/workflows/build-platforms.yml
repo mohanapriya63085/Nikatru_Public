@@ -1533,8 +1533,8 @@ jobs:
         timeout-minutes: 1
         shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.3 --default-shell {0}
         run: |
-          git config --global core.longpaths true
-          git config --global --get core.longpaths
+          node tooling/ops/access-violation-retry.mjs -- git config --global core.longpaths true
+          node tooling/ops/access-violation-retry.mjs -- git config --global --get core.longpaths
       - name: Resolve the workspace
         timeout-minutes: 4
         shell: node ../.nikatru-shell/quiet-step.mjs --name build-platforms.windows_arm64.4 --default-shell {0}

@@ -1330,18 +1330,12 @@ jobs:
       - name: Git may write paths past MAX_PATH
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.3 --default-shell {0}
         run: |
-          git config --global core.longpaths true
-          git config --global --get core.longpaths
+          node tooling/ops/access-violation-retry.mjs -- git config --global core.longpaths true
+          node tooling/ops/access-violation-retry.mjs -- git config --global --get core.longpaths
       - name: Resolve the workspace
         timeout-minutes: 2
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-artifacts.4 --default-shell {0}
-        run: |
-          flutter pub get --enforce-lockfile
-          if ($LASTEXITCODE -eq -1073741819 -or $LASTEXITCODE -eq 3221225477) {
-            Write-Output "::nikatru-detail::flutter pub get --enforce-lockfile exited $LASTEXITCODE (0xC0000005, an access violation, not a resolution failure); retrying once"
-            flutter pub get --enforce-lockfile
-          }
-          exit $LASTEXITCODE
+        run: node tooling/ops/access-violation-retry.mjs -- flutter pub get --enforce-lockfile
       - name: Derive the release line from pubspec
         id: ver
         shell: bash
@@ -1491,8 +1485,8 @@ jobs:
         timeout-minutes: 1
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-x64-artifacts.3 --default-shell {0}
         run: |
-          git config --global core.longpaths true
-          git config --global --get core.longpaths
+          node tooling/ops/access-violation-retry.mjs -- git config --global core.longpaths true
+          node tooling/ops/access-violation-retry.mjs -- git config --global --get core.longpaths
       - name: Resolve the workspace
         timeout-minutes: 2
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.windows-x64-artifacts.4 --default-shell {0}

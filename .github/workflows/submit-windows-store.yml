@@ -379,8 +379,8 @@ jobs:
       - name: Git may write paths past MAX_PATH
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.build-arm64.3 --default-shell {0}
         run: |
-          git config --global core.longpaths true
-          git config --global --get core.longpaths
+          node tooling/ops/access-violation-retry.mjs -- git config --global core.longpaths true
+          node tooling/ops/access-violation-retry.mjs -- git config --global --get core.longpaths
       - name: Resolve the workspace
         shell: node ../.nikatru-shell/quiet-step.mjs --name submit-windows-store.build-arm64.4 --default-shell {0}
         run: flutter pub get --enforce-lockfile

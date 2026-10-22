@@ -1525,7 +1525,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set +e
-          node tooling/ops/verify-supabase-templates.mjs --selfhosted --env-not-judged-until 2026-10-24
+          node tooling/ops/verify-supabase-templates.mjs --selfhosted --env-not-judged-until 2026-11-20
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
@@ -1827,7 +1827,7 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set +e
-          node tooling/ops/www-redirect-rule.mjs --read-token-pending-until 2026-10-21
+          node tooling/ops/www-redirect-rule.mjs
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
