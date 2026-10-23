@@ -18,7 +18,11 @@ on:
         required: false
       GLITCHTIP_READ_TOKEN:
         required: false
-      GH_POOL_DISPATCH_TOKEN_POOL_ACCOUNT_3:
+      GH_POOL_DISPATCH_TOKEN_POOL_A:
+        required: false
+      GH_POOL_DISPATCH_TOKEN_POOL_B:
+        required: false
+      GH_POOL_DISPATCH_TOKEN_POOL_C:
         required: false
       PRIVATE_DEPLOY_KEY:
         required: true
@@ -147,8 +151,8 @@ jobs:
 
   guard-tests:
     name: Guards — the guards can still fail (shard ${{ matrix.shard }})
-    needs: detect
-    if: needs.detect.outputs.affected == 'true'
+    needs: [detect, pool-guards]
+    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-guards.outputs.adopted), 'guard-tests')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -338,12 +342,162 @@ jobs:
           key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.guard-tests.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
-  guard-tests-pool-shadow:
-    name: Guards — the same shards in their CI runner pool (shadow)
+  pool-guards:
+    name: Guards — dispatch to the CI runner pools
     needs: detect
     if: needs.detect.outputs.affected == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      modes: ${{ steps.pool.outputs.modes }}
+      adopted: ${{ steps.pool.outputs.adopted }}
+      fallback: ${{ steps.pool.outputs.fallback }}
+      shadow: ${{ steps.pool.outputs.shadow }}
+      children: ${{ steps.pool.outputs.children }}
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ inputs.nikatru_sha || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
+      - name: "Check out private main's pool tooling, which this job runs instead of the branch's (generated: the private tree)"
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: main
+          path: .pool-trusted
+          sparse-checkout: |
+            tooling
+            .github/workflows
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - id: node-pin
+        name: Read the Node pin from private main's copy, never from this branch's tree
+        timeout-minutes: 1
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          [ -d .pool-trusted ] && [ ! -L .pool-trusted ] && [ "$(cd .pool-trusted && pwd -P)" = "$(pwd -P)/.pool-trusted" ] || { echo "::error::.pool-trusted is not private main's checkout"; exit 1; }
+          [ ! -L .pool-trusted/tooling ] && [ ! -L .pool-trusted/tooling/versions.json ] || { echo "::error::private main's versions.json is a symlink"; exit 1; }
+          v="$(jq -r '.node' .pool-trusted/tooling/versions.json)"
+          [[ "$v" =~ ^[0-9]+$ ]] || { echo "::error::private main's tooling/versions.json names no Node major"; exit 1; }
+          echo "node=$v" >> "$GITHUB_OUTPUT"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.pool-guards.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        with:
+          node-version: ${{ steps.node-pin.outputs.node }}
+      - id: pool
+        name: Dispatch each class to its pool (and, in pool mode, adopt its verdicts)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
+          GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
+          GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node .pool-trusted/tooling/ops/pool-shadow.mjs dispatch --root .pool-trusted --workflow lane-guards.yml
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.pool-guards.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Hand this job's red detail to the report job, sealed (generated)
+        id: nikatru-handoff
+        if: always()
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.pool-guards.${{ strategy.job-index }}
+        run: |
+          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
+            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
+            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
+          fi
+      - name: Save the hand-off (generated)
+        if: always() && steps.nikatru-handoff.outputs.has == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.pool-guards.${{ strategy.job-index }}
+          enableCrossOsArchive: true
+
+  pool-guards-record:
+    name: Guards — record home vs pool (shadow)
+    needs: [detect, pool-guards, guard-tests, guard-meta, guards-legal, guards-store, guards-chassis]
+    if: always() && needs.detect.outputs.affected == 'true' && needs.pool-guards.outputs.shadow != '[]'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     continue-on-error: true
     permissions:
       contents: read
@@ -433,7 +587,7 @@ jobs:
           echo "node=$v" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-pool-shadow.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.pool-guards-record.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -451,18 +605,21 @@ jobs:
         timeout-minutes: 2
         with:
           node-version: ${{ steps.node-pin.outputs.node }}
-      - name: Run the guard shards in their pool too, and record home vs pool
-        timeout-minutes: 21
+      - name: Record home vs pool for each unit
+        timeout-minutes: 6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_POOL_TOKEN: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_ACCOUNT_3 }}
+          GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
+          GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
+          GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
+          POOL_CHILDREN: ${{ needs.pool-guards.outputs.children }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node .pool-trusted/tooling/ops/pool-shadow.mjs --root .pool-trusted --class guard-shards --shards 1,2,3,4
+          node .pool-trusted/tooling/ops/pool-shadow.mjs record --root .pool-trusted --workflow lane-guards.yml
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-tests-pool-shadow.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.pool-guards-record.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -470,7 +627,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.guard-tests-pool-shadow.${{ strategy.job-index }}
+          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.pool-guards-record.${{ strategy.job-index }}
         run: |
           if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
             py=python3; python3 -c '' >/dev/null 2>&1 || py=python
@@ -481,7 +638,7 @@ jobs:
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.guard-tests-pool-shadow.${{ strategy.job-index }}
+          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-lane-guards.pool-guards-record.${{ strategy.job-index }}
           enableCrossOsArchive: true
 
   guard-tests-floor:
@@ -720,8 +877,8 @@ jobs:
 
   guard-meta:
     name: Guards — the guards can still fail
-    needs: detect
-    if: needs.detect.outputs.affected == 'true'
+    needs: [detect, pool-guards]
+    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-guards.outputs.adopted), 'guard-meta')
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:
@@ -845,6 +1002,14 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: A pool account changes by data alone
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-pool-portable.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every job a pull request runs is run by the parity preflight, or exempt with its reason
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -852,7 +1017,7 @@ jobs:
           node tooling/ci/assert-preflight-parity.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No new test case is declared inside a loop, and the loop baseline only shrinks
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -860,7 +1025,7 @@ jobs:
           node tooling/ci/assert-no-loop-cases.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: A new mechanism claim arrives with its test or a recorded demotion, and the claim backlog only shrinks
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -868,7 +1033,7 @@ jobs:
           node tooling/ci/assert-mechanism-claims.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: An extension README's ungraded-fixture table says what the fixture-coverage baseline says
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -876,7 +1041,7 @@ jobs:
           node tooling/ci/assert-ungraded-baseline-doc.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The enforcement index is what the tree says
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -884,7 +1049,7 @@ jobs:
           node tooling/ci/assert-enforcement-index.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every line of the app template is accounted for
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -892,7 +1057,7 @@ jobs:
           node tooling/ci/assert-chassis-ledger.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guards refuse an empty subject
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -900,7 +1065,7 @@ jobs:
           node tooling/ci/assert-guards-refuse-empty.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No dead tracked files
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -908,7 +1073,7 @@ jobs:
           node tooling/scripts/assert-no-dead-files.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every tracked path is placed in the lane map, and every lane glob matches a file
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -916,7 +1081,7 @@ jobs:
           node tooling/ci/lane-detect.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Main's newest merge carries its Rows line in the squash message
         if: ((github.event.client_payload.event || github.event_name) == 'push' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') && (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
         run: |
@@ -925,7 +1090,7 @@ jobs:
           node tooling/ci/assert-main-rows.mjs --ref "$NIKATRU_SHA"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The CI docs match the workflows (gen-ci-map --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -933,7 +1098,7 @@ jobs:
           node tooling/ci/gen-ci-map.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.18 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release runbook's arming lines match the register (channel-arming --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -941,7 +1106,7 @@ jobs:
           node tooling/ci/channel-arming.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The release runbook's §3 matches what a Release carries (gen-release-carries --check)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -949,7 +1114,7 @@ jobs:
           node tooling/ci/gen-release-carries.mjs --check
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The public shell is what the generator writes, and lets no outsider in (assert-public-shell)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -957,7 +1122,7 @@ jobs:
           node tooling/ci/assert-public-shell.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: No shell workflow starts on an event that skips every job it has (assert-no-skipped-starts)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -965,7 +1130,7 @@ jobs:
           node tooling/ci/assert-no-skipped-starts.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every source script reaches the public shell intact, read by a real YAML parser (shell-script-parity)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -973,7 +1138,7 @@ jobs:
           python3 -I tooling/ci/shell-script-parity.py .
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Guard headers cite code pinned to a commit, never by a bare line number
         env:
           GUARD_HEADER_CITATIONS_BASE: ${{ github.event.client_payload.base_ref && format('origin/{0}', github.event.client_payload.base_ref) || '' }}
@@ -983,7 +1148,7 @@ jobs:
           node tooling/ci/assert-guard-header-citations.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every changed path is mapped to a check, or declared ungraded (affected-guards --list)
         if: ${{ !cancelled() }}
         env:
@@ -994,7 +1159,7 @@ jobs:
           node tooling/scripts/affected-guards.mjs --list --sha HEAD --base "${AFFECTED_BASE:-origin/main}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-guards.guard-meta.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1670,8 +1835,8 @@ jobs:
 
   guards-legal:
     name: Guards — privacy, legal and money
-    needs: detect
-    if: needs.detect.outputs.affected == 'true'
+    needs: [detect, pool-guards]
+    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-guards.outputs.adopted), 'guards-legal')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2187,8 +2352,8 @@ jobs:
 
   guards-store:
     name: Guards — store, release and versioning
-    needs: detect
-    if: needs.detect.outputs.affected == 'true'
+    needs: [detect, pool-guards]
+    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-guards.outputs.adopted), 'guards-store')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -2797,8 +2962,8 @@ jobs:
 
   guards-chassis:
     name: Guards — chassis, app surface and packages
-    needs: detect
-    if: needs.detect.outputs.affected == 'true'
+    needs: [detect, pool-guards]
+    if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-guards.outputs.adopted), 'guards-chassis')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -3409,7 +3574,7 @@ jobs:
 
   lane-verdict:
     name: lane-verdict
-    needs: [detect, guard-tests, guard-tests-pool-shadow, guard-tests-floor, guard-meta, guards-platform, guards-legal, guards-store, guards-chassis, security-scan]
+    needs: [detect, pool-guards, pool-guards-record, guard-tests, guard-tests-floor, guard-meta, guards-platform, guards-legal, guards-store, guards-chassis, security-scan]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5

@@ -503,7 +503,9 @@ jobs:
     secrets:
       GLITCHTIP_TOKEN: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.GLITCHTIP_TOKEN || '' }}
       GLITCHTIP_READ_TOKEN: ${{ secrets.GLITCHTIP_READ_TOKEN }}
-      GH_POOL_DISPATCH_TOKEN_POOL_ACCOUNT_3: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_ACCOUNT_3 }}
+      GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
+      GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
+      GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
       PRIVATE_DEPLOY_KEY: ${{ secrets.PRIVATE_DEPLOY_KEY }}
       NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
       BRIDGE_READ_SECRET: ${{ (github.event.client_payload.event || github.event_name) != 'pull_request' && secrets.BRIDGE_READ_SECRET || '' }}
@@ -841,9 +843,9 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Push the generated pool shell into every listed pool
         env:
-          GH_POOL_TOKEN_POOL_ACCOUNT_2: ${{ secrets.GH_POOL_TOKEN_POOL_ACCOUNT_2 }}
-          GH_POOL_TOKEN_POOL_ACCOUNT_3: ${{ secrets.GH_POOL_TOKEN_POOL_ACCOUNT_3 }}
-          GH_POOL_TOKEN_POOL_ACCOUNT_4: ${{ secrets.GH_POOL_TOKEN_POOL_ACCOUNT_4 }}
+          GH_POOL_TOKEN_POOL_A: ${{ secrets.GH_POOL_TOKEN_POOL_A }}
+          GH_POOL_TOKEN_POOL_B: ${{ secrets.GH_POOL_TOKEN_POOL_B }}
+          GH_POOL_TOKEN_POOL_C: ${{ secrets.GH_POOL_TOKEN_POOL_C }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
