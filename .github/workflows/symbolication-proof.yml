@@ -377,20 +377,27 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name symbolication-proof.prove.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        if: ${{ matrix.target == 'linux-x64' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: ${{ matrix.target == 'linux-x64' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - name: Install the Linux desktop toolchain and a virtual display
         if: ${{ matrix.target == 'linux-x64' }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
-            xvfb
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name symbolication-proof.prove.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev xvfb
       - name: Build the crash probe (obfuscated release Linux bundle)
         if: ${{ matrix.target == 'linux-x64' }}
         working-directory: apps/${{ matrix.app }}

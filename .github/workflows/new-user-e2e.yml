@@ -747,10 +747,28 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - name: Install Playwright's Chromium (and its system packages)
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: npx playwright install --with-deps chromium
+          working-directory: _playwright
       - name: First sign-in UI legs (the app's own buttons, in a browser)
         timeout-minutes: 8
         run: |
@@ -764,7 +782,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.14 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Stack and Worker logs
         if: failure()
         run: |
@@ -774,7 +792,7 @@ jobs:
           tail -150 "$RUNNER_TEMP/wrangler.log"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Tear down
         if: always()
         run: |
@@ -783,7 +801,7 @@ jobs:
           node tooling/e2e/first-sign-in/stack.mjs down
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.16 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.first-sign-in.17 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

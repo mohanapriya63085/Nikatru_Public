@@ -2054,10 +2054,28 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
-          npx playwright install --with-deps chromium
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.templates.6 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - name: Install Playwright's Chromium (and its system packages)
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: npx playwright install --with-deps chromium
+          working-directory: _playwright
       - name: The template browser tier runs, and resolves Playwright from the fleet location
         shell: bash
         run: |
@@ -2087,7 +2105,7 @@ jobs:
           exit "$code"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.templates.7 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions-ci.templates.8 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()

@@ -580,9 +580,10 @@ jobs:
           cache: 'false'
       - name: Linux build and session deps
         if: needs.plan.outputs.money == 'true'
+        timeout-minutes: 9
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          node tooling/ops/ci-install-cache.mjs run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- \
+            sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
             xvfb gnome-keyring dbus-x11 libsecret-tools

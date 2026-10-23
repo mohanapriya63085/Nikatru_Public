@@ -416,15 +416,25 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-suite.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - name: Install Chromium
-        working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          npx playwright install --with-deps chromium
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-suite.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: npx playwright install --with-deps chromium
+          working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
       - name: Firefox on the image
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"

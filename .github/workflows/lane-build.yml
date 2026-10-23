@@ -934,19 +934,37 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.18 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
-      - name: Install the engines of the PR-lane web-engines rows (lockfile Playwright)
-        working-directory: _playwright
+      - name: The engines of the PR-lane web-engines rows
+        id: pr-engines
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          engines="$(node ../tooling/e2e/web-engines/projects.mjs --pr-engines)"
+          engines="$(node tooling/e2e/web-engines/projects.mjs --pr-engines)"
           echo "Engines: ${engines}"
-          # shellcheck disable=SC2086
-          npx playwright install --with-deps ${engines}
+          echo "engines=${engines}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - name: Install the engines of the PR-lane web-engines rows (lockfile Playwright)
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: npx playwright install --with-deps ${{ steps.pr-engines.outputs.engines }}
+          working-directory: _playwright
       - name: The core flow at phone width on the built bundle (add a subscription, read it back)
         env:
           WEB_ENGINE_APP: ${{ matrix.app }}
@@ -973,7 +991,7 @@ jobs:
           exit "$status"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hold the bundle to its byte budget
         env:
           PERF_BUDGET_BASE: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.base_sha || '') || (github.event.client_payload.event == 'push' && github.event.client_payload.base_sha || '') }}
@@ -984,7 +1002,7 @@ jobs:
           PERF_BUDGET_BASE="${PERF_BUDGET_BASE}" node tooling/web/perf-budget.mjs --measure apps/${{ matrix.app }}/build/web --app ${{ matrix.app }}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Every artifact this lane claims exists, and is not empty
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -992,7 +1010,7 @@ jobs:
           node tooling/ci/assert-artifact-shape.mjs --app ${{ matrix.app }} --platform web-artifacts
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Does this run need the dart2wasm build? (change detection, reported in the summary)
         id: wasm-scope
         env:
@@ -1003,7 +1021,7 @@ jobs:
           node tooling/ci/wasm-build-scope.mjs --app ${{ matrix.app }} --base "${WASM_BASE}"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Build the dart2wasm variant, for the register's measurement only
         if: steps.wasm-scope.outputs.run == 'true'
         env:
@@ -1016,7 +1034,7 @@ jobs:
           node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} web web --lane pr --wasm
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.24 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Measure the dart2wasm variant against the JS build
         if: steps.wasm-scope.outputs.run == 'true'
         run: |
@@ -1025,7 +1043,7 @@ jobs:
           node tooling/web/perf-budget.mjs --measure-wasm apps/${{ matrix.app }}/build/web-wasm --app ${{ matrix.app }} --js apps/${{ matrix.app }}/build/web
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.25 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name lane-build.web-artifacts.26 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1134,13 +1152,24 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         with:
           cache: ${{ matrix.arch == 'arm64' && 'false' || 'true' }}
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - name: Linux build deps
-        shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.3 --default-shell {0}
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev
       - name: Resolve the workspace
         shell: node ../.nikatru-shell/quiet-step.mjs --name lane-build.linux-artifacts.4 --default-shell {0}
         run: flutter pub get --enforce-lockfile

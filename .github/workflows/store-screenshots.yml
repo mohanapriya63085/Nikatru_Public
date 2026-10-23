@@ -834,11 +834,12 @@ jobs:
         with:
           cache: 'false'
       - name: Linux build deps
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y \
+          node tooling/ops/ci-install-cache.mjs run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- \
+            sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
             xvfb gnome-keyring dbus-x11
@@ -1957,11 +1958,12 @@ jobs:
         with:
           cache: 'false'
       - name: Linux build deps and the film tools
+        timeout-minutes: 9
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y \
+          node tooling/ops/ci-install-cache.mjs run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- \
+            sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
             xvfb gnome-keyring dbus-x11 xdotool ffmpeg fonts-dejavu-core

@@ -62,7 +62,8 @@ export const TAIL_LINES = 400;
 export const DETAIL_FILE = 'report-detail.md';
 /** How long the output pipes may stay open after the command exits (a leftover background process). */
 export const DRAIN_MS = 5000;
-const NAME = /^[A-Za-z0-9][A-Za-z0-9._()-]{0,99}$/;
+/** The one `--name` quiet-step accepts (gen-pool-shell.mjs checks every name it writes against this, never a copy). */
+export const STEP_NAME = /^[A-Za-z0-9][A-Za-z0-9._()-]{0,99}$/;
 /** A line a script publishes on purpose: its text is printed, masked. */
 export const PUBLIC_PREFIX = '::nikatru-public::';
 /** A line a script hands to the private detail on purpose, green or red: its text, masked. */
@@ -386,7 +387,7 @@ export function parseArgs(argv) {
     else if (a === '--public') out.public = true;
     else return { error: `unknown argument ${a}` };
   }
-  if (!out.name || !NAME.test(out.name)) return { error: '--name <name> is required: letters, digits and ._()- only' };
+  if (!out.name || !STEP_NAME.test(out.name)) return { error: '--name <name> is required: letters, digits and ._()- only' };
   if (out.defaultShell && out.cmd.length) return { error: 'give --default-shell <file> or -- <cmd...>, not both' };
   if (!out.defaultShell && out.cmd.length === 0) return { error: 'no command after --' };
   return out;

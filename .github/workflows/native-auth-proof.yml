@@ -1282,19 +1282,27 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+      - name: Check out private main's composite actions (generated)
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - name: Linux build and session deps
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
-            xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.linux.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
       - name: Enable the Linux desktop target
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -2185,19 +2193,27 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+      - name: Check out private main's composite actions (generated)
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: env.PROOF_NEEDS_DEVICE == 'true'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - name: Linux build and session deps
         if: env.PROOF_NEEDS_DEVICE == 'true'
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          sudo apt-get update
-          sudo apt-get install -y \
-            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
-            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
-            xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.linux-oauth-return.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+        timeout-minutes: 9
+        uses: ./.nikatru-trusted/.github/actions/cached-install
+        with:
+          install: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
       - name: Enable the Linux desktop target
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
