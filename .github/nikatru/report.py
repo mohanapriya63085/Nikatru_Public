@@ -59,7 +59,8 @@
 #   report.py pr-meta       (the gate job's pre-read, before any private code) the private PR
 #                           as it is now through POST /pr-meta, signed with BRIDGE_READ_SECRET and
 #                           bound to this run, to NIKATRU_PR_META_FILE; red when the PR changes a
-#                           RUNNER_SOURCES file without the lead's RUNNER_LABEL (A7-05/A7-06)
+#                           RUNNER_SOURCES file without the lead's RUNNER_LABEL (A7-05/A7-06), and
+#                           that wait recorded as the gate's HOLD, which send posts pending
 #
 #   nikatru-report — the report secret; restores nothing, runs nothing another job
 #   wrote (assert-public-shell.mjs limb I). A fresh sparse checkout of this shell, then
@@ -147,6 +148,18 @@
 # (and nothing else) as its detail; a lane's success still posts none. The first such note is an
 # applied PR-scoped secret-scan exemption (tooling/ci/scan-secrets.mjs), a hole a reviewer must see.
 #
+# ⏱ 2026-10-23 (ci-gate-holds, O-FIRST-PASS-AUDIT-LANE-FIXES decision 2): A HOLD IS PENDING, NOT A FAILURE. The
+# first-pass audit of 2026-10-17 counted a gate that only WAITS (a runner-source PR with no RUNNER_LABEL yet, which
+# the lane is told to ask for before its first run) as a red CI run, and the lane re-diagnosed a red that was a wait.
+# pr-meta now records such a wait as a `### HOLD <what>` section of the gate's detail (HOLD_HEADER) and STILL fails
+# its step, so the gate job's own result stays failure: a hold whose record is lost reads as the failure it always
+# was, never as a pass. `send` then posts the gate `pending` instead of `failure` only when the hold is the ONLY red
+# (held): every lane of the config reported success (the gate's `Require all lanes green`), the bundle was read, the
+# gate's detail carries a HOLD section and no `### RED` section (every quiet step of the gate passed). Anything else
+# stays failure. Pending is never green: a lander gates on success. The residual, said: a step of the gate that
+# fails with no detail at all (a checkout, the commit-naming check) beside a hold reads as the hold; the gate is
+# still pending, never success, and the next run after the label names that step.
+#
 # Exit 0 every report accepted (handoff: sealed, or nothing to hand over; collect: the
 # bundle written) · 1 a report refused or not delivered (a verdict that did not land
 # must not look green) · 2 COVERAGE LOST: no config, no bridge URL, no secret, no sha —
@@ -189,6 +202,9 @@ TAG_BYTES = 32
 DETAIL_DIR = '.nikatru-detail'
 # A green step's own detail section (the quiet-step wrapper's noteSection).
 NOTE_HEADER = '### NOTE '
+# A red step's detail section (the quiet-step wrapper's detailSection), and a gate step that only WAITS (pr-meta).
+RED_HEADER = '### RED '
+HOLD_HEADER = '### HOLD '
 # The agent every POST to the bridge names (B1): never urllib's default, which the edge bans.
 USER_AGENT = 'nikatru-shell-report/1'
 COLLECTED_DIR = '.nikatru-collected'
@@ -628,13 +644,26 @@ def detail_for(members, details):
 def notes_of(detail):
     """The `### NOTE <step>` sections of a detail (the quiet-step wrapper's noteSection): what a step
     said to the private pull request on purpose, green or red."""
+    return sections_of(detail, NOTE_HEADER)
+
+
+def sections_of(detail, header):
+    """The sections of a detail whose `### ` line starts with `header`, joined."""
     out, keep = [], False
     for line in detail.split('\n'):
         if line.startswith('### '):
-            keep = line.startswith(NOTE_HEADER)
+            keep = line.startswith(header)
         if keep:
             out.append(line)
     return '\n'.join(out).strip('\n')
+
+
+def held(item, cfg, results, detail, lost):
+    """True when the gate's failure is a HOLD and nothing else (see the header): its detail carries a HOLD section
+    and no RED section, the bundle was read, and every lane of the config reported success."""
+    if not is_gate(item, cfg) or lost or not sections_of(detail, HOLD_HEADER) or sections_of(detail, RED_HEADER):
+        return False
+    return all(results.get(lane['job']) == 'success' for lane in cfg['lanes'])
 
 
 def build(context, state, env, detail, gate=False):
@@ -647,7 +676,11 @@ def build(context, state, env, detail, gate=False):
         'state': state,
         'summary': f'{context}: {state} (public run {run_id}, attempt {attempt})'[:SUMMARY_MAX_CHARS],
     }
-    if state in ('failure', 'error') and detail.strip():
+    if state == 'pending':
+        # A HOLD: the summary says what it waits on (the bridge writes a pending status only, no comment).
+        hold = sections_of(detail, HOLD_HEADER).split('\n')
+        body['summary'] = f'{context}: pending, waits on {hold[0][len(HOLD_HEADER):].strip()} (public run {run_id})'[:SUMMARY_MAX_CHARS]
+    elif state in ('failure', 'error') and detail.strip():
         body['detail'] = fit_bytes(detail, DETAIL_MAX_BYTES)
     elif state == 'success' and gate and notes_of(detail):
         # ⏱ 2026-10-08 · gitleaks-pr-scoped-r2: a GREEN gate carries its NOTE sections, and only those.
@@ -871,7 +904,10 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
             print(f"x  {item['context']}: NOT reported — this run is not a pull request, main or a tag run (nor a lead dispatch its config allows) "
                   f"(event {env.get('NIKATRU_P_EVENT', '')!r}, ref {env.get('NIKATRU_P_REF', '')!r}); only such a run may write the gate")
             continue
-        status, why = post(url, secret, build(item['context'], state, env, details.get(item['context'], ''), is_gate(item, cfg)), cfg['postTimeoutS'], opener)
+        detail = details.get(item['context'], '')
+        if state == 'failure' and held(item, cfg, results, detail, lost):
+            state = 'pending'
+        status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener)
         ok = 200 <= status < 300
         failed += 0 if ok else 1
         print(f"{'ok' if ok else 'x '} {item['context']} {state} -> HTTP {status}{f' ({why})' if why and not ok else ''}")
@@ -1065,9 +1101,22 @@ def pr_meta(env, opener=urllib.request.urlopen, run=subprocess.run, now=time.tim
     if isinstance(labels, list) and RUNNER_LABEL in labels:
         print(f'ok pr-meta: {", ".join(touched)} changed, and the PR carries {RUNNER_LABEL} — {RUNNER_LABEL_ADVISORY}')
         return 0
-    print(f'::error title=ci-gate::this pull request changes {", ".join(touched)}, which every shell job runs as the shell\'s own copy after the merge; '
-          f'a lead must add the label {RUNNER_LABEL} to the private PR (then re-run ci-gate)')
+    # ⏱ 2026-10-23 · ci-gate-holds: a WAIT, recorded as the gate's HOLD (send posts it pending when it is the only red);
+    # the step still fails, so a hold whose record is lost is the failure it always was.
+    why = (f'this pull request changes {", ".join(touched)}, which every shell job runs as the shell\'s own copy after the merge; '
+           f'it waits on a lead adding the label {RUNNER_LABEL} to the private PR (then re-run ci-gate)')
+    hold_detail(env, f'the label {RUNNER_LABEL}', why)
+    print(f'::warning title=ci-gate HOLD (pending, not a failure)::{why}')
     return 1
+
+
+def hold_detail(env, what, why):
+    """A `### HOLD <what>` section on this job's detail ($RUNNER_TEMP/report-detail.md, which the job hands over)."""
+    temp = env.get('RUNNER_TEMP', '')
+    if not temp:
+        return
+    with open(os.path.join(temp, DETAIL_FILE), 'a', encoding='utf-8') as f:
+        f.write(f'{HOLD_HEADER}{what}\n\n{why}\n\n')
 
 
 def main(argv, env):
