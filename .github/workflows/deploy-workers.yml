@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 766972b648c224f2950a05e482f0719894d5650394a6b67c7248937f8169816d
+  NIKATRU_SHELL_FINGERPRINT: 5af047887f8c616739a5016945ad88e3655f0905568904c78dd5ed4ddf2fd8e8
 
 name: Part of CI · Deploy workers
 
@@ -213,6 +213,7 @@ jobs:
             exit 1
           fi
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -222,6 +223,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
@@ -336,6 +338,7 @@ jobs:
         id: target
         run: node tooling/ci/site-target.mjs --origin platform >> "$GITHUB_OUTPUT"
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -345,6 +348,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
@@ -470,6 +474,7 @@ jobs:
         id: target
         run: node tooling/ci/site-target.mjs --origin edge-shield >> "$GITHUB_OUTPUT"
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -479,6 +484,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"

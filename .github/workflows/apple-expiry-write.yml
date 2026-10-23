@@ -93,6 +93,26 @@ jobs:
               echo "::error::the pushed sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
               exit 1
             fi
+            tip="$(git -C .nikatru-main rev-parse HEAD)"
+            if [ "$NIKATRU_PINNED" != "$tip" ]; then
+              echo "::error::the pushed sha $NIKATRU_PINNED is not private main's tip $tip (an older commit of main, or a push main has moved past: the tip's own run builds it): nothing is pinned"
+              exit 1
+            fi
+          fi
+          if [ "$NIKATRU_P_TAG_PUSH" = true ] && [ -n "$NIKATRU_PINNED" ]; then
+            if [ "$NIKATRU_PINNED" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::a tag push pinned $NIKATRU_PINNED, not the dispatched sha $NIKATRU_P_SHA: nothing is pinned"
+              exit 1
+            fi
+            tagged="$(git -C .nikatru-tag rev-parse HEAD 2>/dev/null || true)"
+            if [ "$tagged" != "$NIKATRU_PINNED" ]; then
+              echo "::error::the dispatched tag resolves to ${tagged:-nothing}, not the dispatched sha $NIKATRU_PINNED: nothing is pinned"
+              exit 1
+            fi
+            if ! git -C .nikatru-main merge-base --is-ancestor "$NIKATRU_PINNED" HEAD; then
+              echo "::error::the tagged sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
+              exit 1
+            fi
           fi
           if [ -z "$NIKATRU_PINNED" ]; then
             echo "::error::no candidate became the commit this run builds in 1 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"
@@ -255,33 +275,3 @@ jobs:
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
-
-  nikatru-ran:
-    name: Fail this run if it ran nothing (generated)
-    needs: [write]
-    if: "!cancelled()"
-    runs-on: ubuntu-24.04
-    defaults:
-      run:
-        working-directory: ${{ github.workspace }}
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    steps:
-      - name: Check out nothing of the private tree but its issue templates (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          sparse-checkout: .github/ISSUE_TEMPLATE
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Fail when every job of this run was skipped (generated)
-        shell: bash
-        env:
-          NIKATRU_RESULTS: write=${{ needs.write.result }}
-        run: |
-          for r in $NIKATRU_RESULTS; do
-            if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi
-          done
-          echo "::error::ran nothing: every job of this $GITHUB_EVENT_NAME run was skipped ($NIKATRU_RESULTS), so a green run would claim work that never ran. If a generated job before them failed, that failure is the cause. A workflow whose no-op run is legitimate is named in tooling/ci/public-shell.json noopRuns."
-          exit 1

@@ -258,6 +258,7 @@ jobs:
           PR: ${{ inputs.pr }}
         run: node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --pr "$PR"
       - name: Check out private main's composite actions (generated)
+        if: needs.workers.outputs.platform == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -267,6 +268,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: needs.workers.outputs.platform == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
@@ -360,6 +362,7 @@ jobs:
           PR: ${{ inputs.pr }}
         run: node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --pr "$PR"
       - name: Check out private main's composite actions (generated)
+        if: matrix.worker.worker != 'none'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -369,6 +372,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: matrix.worker.worker != 'none'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"

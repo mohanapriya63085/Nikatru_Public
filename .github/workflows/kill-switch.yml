@@ -19,6 +19,8 @@ on:
           - resume-rail
           - paywall-off
           - paywall-restore
+          - ai-off
+          - ai-restore
       rail:
         description: 'pause-rail / resume-rail only: paddle (everywhere but India) or razorpay (India).'
         required: false
@@ -30,7 +32,7 @@ on:
         type: string
         default: ''
       reason:
-        description: 'One line: what is wrong (pause-rail, paywall-off). Goes to the audit line in this run''s PUBLIC log (write it as for the status page), never to the served config.'
+        description: 'One line: what is wrong, or why it is undone. REQUIRED to execute any switch: it pages the owner and goes to the audit line in this run''s PUBLIC log (write it as for the status page), never to the served config.'
         required: false
         type: string
         default: ''
@@ -135,6 +137,9 @@ jobs:
           INCIDENT: ${{ inputs.incident }}
           TARGET_ENV: ${{ inputs.environment }}
           EXECUTE: ${{ inputs.execute }}
+          OWNER_PAGE_PUSH_URL: ${{ secrets.OWNER_PAGE_PUSH_URL }}
+          OWNER_PAGE_PUSH_TOKEN: ${{ secrets.OWNER_PAGE_PUSH_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: node tooling/ops/kill-switch-dispatch.mjs
 

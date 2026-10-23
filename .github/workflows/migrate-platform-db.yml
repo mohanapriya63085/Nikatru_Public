@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 4954cec0ed428750f404ae7fd0e91500c3f6e79bd6e07df0dfbb0253ddffbfa8
+  NIKATRU_SHELL_FINGERPRINT: 456dea9cea71a2eaeb2397b83d328eaff1ad9f3ca62499b05c7bff79830c600c
 
 name: Part of CI · Migrate PLATFORM_DB
 
@@ -97,6 +97,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs platform --recipe deploy-workers.yml
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -106,6 +107,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"

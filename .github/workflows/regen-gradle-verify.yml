@@ -98,6 +98,26 @@ jobs:
               echo "::error::the pushed sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
               exit 1
             fi
+            tip="$(git -C .nikatru-main rev-parse HEAD)"
+            if [ "$NIKATRU_PINNED" != "$tip" ]; then
+              echo "::error::the pushed sha $NIKATRU_PINNED is not private main's tip $tip (an older commit of main, or a push main has moved past: the tip's own run builds it): nothing is pinned"
+              exit 1
+            fi
+          fi
+          if [ "$NIKATRU_P_TAG_PUSH" = true ] && [ -n "$NIKATRU_PINNED" ]; then
+            if [ "$NIKATRU_PINNED" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::a tag push pinned $NIKATRU_PINNED, not the dispatched sha $NIKATRU_P_SHA: nothing is pinned"
+              exit 1
+            fi
+            tagged="$(git -C .nikatru-tag rev-parse HEAD 2>/dev/null || true)"
+            if [ "$tagged" != "$NIKATRU_PINNED" ]; then
+              echo "::error::the dispatched tag resolves to ${tagged:-nothing}, not the dispatched sha $NIKATRU_PINNED: nothing is pinned"
+              exit 1
+            fi
+            if ! git -C .nikatru-main merge-base --is-ancestor "$NIKATRU_PINNED" HEAD; then
+              echo "::error::the tagged sha $NIKATRU_PINNED is not a commit of private main: nothing is pinned"
+              exit 1
+            fi
           fi
           if [ -z "$NIKATRU_PINNED" ]; then
             echo "::error::no candidate became the commit this run builds in 1 attempt(s) (a pull request's merge ref never named the dispatched head $NIKATRU_P_SHA as its second parent): nothing is built — push again, or re-run this workflow"

@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 0c34e9a8b9f014604813feb5adf955a965f7d7a8b3b4f31f2b46382f26fee4eb
+  NIKATRU_SHELL_FINGERPRINT: 92ea1020eb847a62cd4b7408cbcca6159a08c91bed2f14e1de80caa9aa393fa9
 
 name: Part of CI · Deploy web
 
@@ -220,6 +220,7 @@ jobs:
           GLITCHTIP_DSN: ${{ secrets.GLITCHTIP_DSN }}
         run: node tooling/web/connect-origins.mjs --app ${{ matrix.app }} --check --emit-connect >> "$GITHUB_OUTPUT"
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -229,6 +230,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
@@ -262,6 +264,7 @@ jobs:
           TURNSTILE_SITE_KEY: ${{ vars.TURNSTILE_SITE_KEY }}
         run: node tooling/ci/flutter-release-build.mjs ${{ matrix.app }} web web
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -271,6 +274,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
@@ -721,6 +725,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: node tooling/ci/plan-deploy.mjs rajasekarselvam-site --recipe deploy-web.yml
       - name: Check out private main's composite actions (generated)
+        if: steps.plan.outputs.deploy == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -730,6 +735,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.plan.outputs.deploy == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
@@ -891,6 +897,7 @@ jobs:
             node tooling/status/inert-until.mjs --live "$STATUS_PAGE_LIVE"
           fi
       - name: Check out private main's composite actions (generated)
+        if: steps.live.outputs.go == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
@@ -900,6 +907,7 @@ jobs:
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: steps.live.outputs.go == 'true'
         shell: bash
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
