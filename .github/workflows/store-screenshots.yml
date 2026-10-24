@@ -838,7 +838,19 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/ci-install-cache.mjs run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- \
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
             sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
@@ -1962,7 +1974,19 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/ci-install-cache.mjs run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- \
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
             sudo apt-get install -y \
             clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
             libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \

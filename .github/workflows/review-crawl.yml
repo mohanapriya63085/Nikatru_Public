@@ -425,7 +425,19 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
-          node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- npx playwright install --with-deps chromium
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install npx playwright install --with-deps chromium
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.self-test.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -821,7 +833,19 @@ jobs:
           engines="$(node ../tooling/e2e/web-engines/projects.mjs --engines)"
           echo "Engines: ${engines}"
           # shellcheck disable=SC2086
-          node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- npx playwright install --with-deps ${engines}
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install npx playwright install --with-deps ${engines}
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.web-engines.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -965,7 +989,19 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
-          node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- npx playwright install --with-deps chromium
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install npx playwright install --with-deps chromium
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.demo.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -1322,7 +1358,19 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --no-audit --no-fund
-          node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "$RUNNER_TEMP/ci-install-debs" --attempt-minutes 4 -- npx playwright install --with-deps chromium
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install npx playwright install --with-deps chromium
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.public.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
