@@ -632,6 +632,7 @@ jobs:
         run: node tooling/ci/web-preview.mjs --target "$UNIT" >> "$GITHUB_OUTPUT"
       - name: Upload the staged bytes to the pr-<n> alias, never to production
         if: steps.target.outputs.go == 'true'
+        id: deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_PREVIEW_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -652,13 +653,18 @@ jobs:
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --no-audit --no-fund --prefix tooling/wrangler > "$log" 2>&1 || { echo "::error title=web preview::the tooling/wrangler island did not install from its lockfile"; tail -n 20 "$log"; exit 1; }
           got="$(node -p "require('./tooling/wrangler/node_modules/wrangler/package.json').version")"
           if [ "$got" != "$wranglerVersion" ]; then echo "::error title=web preview::the island installed wrangler ${got}, not the ${wranglerVersion} this file pins"; exit 1; fi
-          wrangler="$(pwd)/tooling/wrangler/node_modules/.bin/wrangler"
-          mkdir -p "$RUNNER_TEMP/wrangler-cwd"
-          cd "$RUNNER_TEMP/wrangler-cwd"
-          "$wrangler" pages deploy "$site" --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$HEAD_SHA" --commit-dirty=true >> "$log" 2>&1
+          node tooling/ci/pages-deploy.mjs deploy --cwd "$RUNNER_TEMP/wrangler-cwd" --dir "$site" --project-name "$PROJECT" --branch "$BRANCH" --commit-hash "$HEAD_SHA" --commit-dirty --expect-environment preview --log "$log"
           code=$?
-          if [ "$code" -ne 0 ]; then echo "::error title=web preview::wrangler pages deploy exited ${code}"; tail -n 20 "$log"; exit 1; fi
+          if [ "$code" -ne 0 ]; then echo "::error title=web preview::the preview deploy exited ${code}"; exit 1; fi
           echo "uploaded to the ${BRANCH} alias of ${PROJECT}"
+      - name: Smoke the preview — the smoke production runs, on the pr-<n> alias
+        if: steps.target.outputs.go == 'true'
+        env:
+          UNIT: ${{ matrix.unit }}
+          ALIAS_URL: ${{ steps.target.outputs.alias_url }}
+          HEAD_SHA: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.sha || '') }}
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: node tooling/ci/pages-deploy.mjs smoke --site "$UNIT" --origin "$ALIAS_URL" --expect-sha "$HEAD_SHA" --deployment-url "$DEPLOYMENT_URL" --preview
       - name: Record the preview URL
         if: steps.target.outputs.go == 'true'
         env:

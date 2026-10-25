@@ -1,0 +1,38 @@
+{
+  "_generated": "by tooling/ci/gen-public-shell.mjs; read by report.py beside it. Do not edit.",
+  "bridgeUrl": "https://gh-bridge.nikatru.workers.dev/report",
+  "postTimeoutS": 30,
+  "prefix": "nikatru-detail-",
+  "slots": 8,
+  "sendBudgetS": 360,
+  "gate": {
+    "job": "shell-rehearsal",
+    "context": "shell-rehearsal",
+    "members": [
+      "shell-rehearsal.shell-rehearsal."
+    ]
+  },
+  "lanes": [
+    {
+      "job": "plan",
+      "context": "shell-rehearsal/plan",
+      "members": [
+        "shell-rehearsal.plan."
+      ]
+    },
+    {
+      "job": "rehearse",
+      "context": "shell-rehearsal/rehearse",
+      "members": [
+        "shell-rehearsal.rehearse."
+      ]
+    },
+    {
+      "job": "await",
+      "context": "shell-rehearsal/await",
+      "members": [
+        "shell-rehearsal.await."
+      ]
+    }
+  ]
+}

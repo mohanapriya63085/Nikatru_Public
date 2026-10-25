@@ -320,13 +320,7 @@ jobs:
         run: |
           set -euo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Status deploy::the tooling/wrangler island did not install from its lockfile."; exit 1; }
-          out="$RUNNER_TEMP/pages-deploy.ndjson"
-          rm -f "$out"
-          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy build/status --project-name=nikatru-status --branch=main
-          id=""
-          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$id" ]; then echo "::warning title=Status deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
-          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
+          node tooling/ci/pages-deploy.mjs deploy --dir build/status --site status-site --branch=main --expect-environment production
       - name: Smoke — status.nikatru.com serves THIS build
         if: steps.live.outputs.go == 'true'
         run: node tooling/status/build-status.mjs --smoke https://status.nikatru.com --built build/status/status.json

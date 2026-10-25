@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 4ccd8ff4983cd9667820707a386bd8707e967f7bd1242f47bd3327dfb54d2ba6
+  NIKATRU_SHELL_FINGERPRINT: e44d7b68afe42edae27976e97426ab33ad0514834920db044a116f7d27cd6b0b
 
 name: Part of CI · Deploy web
 
@@ -414,24 +414,8 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           APP: ${{ matrix.app }}
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/pages-deploy.ndjson"
-          rm -f "$out"
-          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy build/web --project-name="$APP" --branch=main
-          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
-          id=""
-          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
-          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
-          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
-          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
-          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
-          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
-          url=""
-          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
-          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
+        working-directory: .
+        run: node tooling/ci/pages-deploy.mjs deploy --cwd "apps/$APP" --dir "apps/$APP/build/web" --project-name="$APP" --branch=main --expect-environment production
       - name: Smoke — the live site serves THIS build
         id: smoke
         if: steps.plan.outputs.deploy == 'true'
@@ -599,35 +583,17 @@ jobs:
       - name: Deploy the apex site to nikatru-apex
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
-        working-directory: build/nikatru-apex
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/pages-deploy.ndjson"
-          rm -f "$out"
-          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy . --project-name=nikatru-apex --branch=main
-          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
-          id=""
-          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
-          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
-          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
-          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
-          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
-          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
-          url=""
-          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
-          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
+        run: node tooling/ci/pages-deploy.mjs deploy --cwd build/nikatru-apex --dir build/nikatru-apex --site nikatru-site --branch=main --expect-environment production
       - name: Smoke — nikatru.com serves THIS commit, and its Function answers
         id: smoke
         if: steps.plan.outputs.deploy == 'true'
         env:
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
-        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SITE_ORIGIN" --expect-sha ${{ env.NIKATRU_SHA }} ${DEPLOYMENT_URL:+--deployment-url "$DEPLOYMENT_URL"}
+        run: node tooling/ci/pages-deploy.mjs smoke --site nikatru-site --origin "$SITE_ORIGIN" --expect-sha "$NIKATRU_SHA" --deployment-url "$DEPLOYMENT_URL"
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
@@ -648,7 +614,7 @@ jobs:
         env:
           LIVE_SHA: ${{ steps.plan.outputs.live_sha }}
           SITE_ORIGIN: ${{ steps.target.outputs.origin }}
-        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SITE_ORIGIN" --expect-sha "$LIVE_SHA"
+        run: node tooling/ci/pages-deploy.mjs smoke --site nikatru-site --origin "$SITE_ORIGIN" --expect-sha "$LIVE_SHA"
       - name: Live — the checkout pages a sale sends a buyer to can open
         if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
         run: node tooling/ops/checkout-pages-live.mjs --strict
@@ -767,37 +733,18 @@ jobs:
       - name: Deploy the personal site
         if: steps.plan.outputs.deploy == 'true'
         id: deploy
-        working-directory: build/personal-site
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           PROJECT: ${{ steps.site.outputs.project }}
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/pages-deploy.ndjson"
-          rm -f "$out"
-          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy . --project-name="$PROJECT" --branch=main
-          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
-          id=""
-          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
-          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
-          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
-          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
-          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
-          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
-          url=""
-          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
-          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
+        run: node tooling/ci/pages-deploy.mjs deploy --cwd build/personal-site --dir build/personal-site --project-name="$PROJECT" --branch=main --expect-environment production
       - name: Smoke — the site serves THIS commit, and it is this site
         id: smoke
         if: steps.plan.outputs.deploy == 'true'
         env:
           SMOKE_ORIGIN: ${{ steps.live.outputs.smoke_origin }}
-          CANONICAL: ${{ steps.site.outputs.canonical }}
           DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
-        run: node tooling/sites/smoke-site-deploy.mjs --origin "$SMOKE_ORIGIN" --expect-sha "$NIKATRU_SHA" --canonical "$CANONICAL" ${DEPLOYMENT_URL:+--deployment-url "$DEPLOYMENT_URL"}
+        run: node tooling/ci/pages-deploy.mjs smoke --site rajasekarselvam-site --origin "$SMOKE_ORIGIN" --expect-sha "$NIKATRU_SHA" --deployment-url "$DEPLOYMENT_URL"
       - name: Record the deployed SHA
         if: always() && steps.deploy.outcome == 'success'
         env:
@@ -927,28 +874,10 @@ jobs:
       - name: Deploy the status page to nikatru-status
         if: steps.live.outputs.go == 'true'
         id: deploy
-        working-directory: build/status
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          set -euo pipefail
-          out="$RUNNER_TEMP/pages-deploy.ndjson"
-          rm -f "$out"
-          WRANGLER_OUTPUT_FILE_PATH="$out" "$GITHUB_WORKSPACE/tooling/wrangler/node_modules/.bin/wrangler" pages deploy . --project-name=nikatru-status --branch=main
-          # why: wrangler may write no ND-JSON file at all; under pipefail a jq over a missing file would red a deploy that succeeded (PR #165 review finding 6).
-          id=""
-          if [ -s "$out" ]; then id="$(jq -r 'select(.type == "pages-deploy-detailed") | .deployment_id // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$id" ]; then echo "::warning title=Pages deploy::wrangler wrote no pages-deploy-detailed entry, so the record carries no deployment id."; fi
-          echo "pages-deployment-id=${id}" >> "$GITHUB_OUTPUT"
-          # ⏱ 2026-10-17 · fix/pages-deployment-url: the deploy's OWN unique URL (`<hash>.<project>.pages.dev`), which the
-          # smoke reads first (smoke-site-deploy.mjs --deployment-url, 4bb3b01). wrangler-action exported it as
-          # `deployment-url`; the locked CLI that replaced it does not, so every smoke got `--deployment-url ""` and exited 2
-          # (main CI 39045742715, d44cd268: the apex and personal-site deploys landed and their smokes went red).
-          url=""
-          if [ -s "$out" ]; then url="$(jq -r 'select(.type == "pages-deploy-detailed") | .url // empty' "$out" | tail -n 1)"; fi
-          if [ -z "$url" ]; then echo "::warning title=Pages deploy::wrangler wrote no deployment url, so the smoke reads the custom domain only."; fi
-          echo "deployment-url=${url}" >> "$GITHUB_OUTPUT"
+        run: node tooling/ci/pages-deploy.mjs deploy --cwd build/status --dir build/status --site status-site --branch=main --expect-environment production
       - name: Smoke — status.nikatru.com serves THIS build
         id: smoke
         if: steps.live.outputs.go == 'true'
