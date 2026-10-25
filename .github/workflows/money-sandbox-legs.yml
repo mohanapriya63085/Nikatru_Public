@@ -292,9 +292,9 @@ jobs:
             echo "::error title=Money sandbox proof cannot run::a test-mode secret is missing (each is named above). Nothing was proven, and that is not a pass."
             exit 1
           fi
-      - name: The sandbox Worker runs THIS commit
+      - name: The harness, the sandbox Worker and the pinned commit are one commit
         if: needs.plan.outputs.money == 'true'
-        run: node tooling/e2e/money/preflight.mjs --sandbox-at "$NIKATRU_SHA"
+        run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
 
   legs:
     name: Every money leg on every rail (sandbox)
@@ -410,6 +410,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
+      - name: The harness, the sandbox Worker and the pinned commit are one commit
+        if: needs.plan.outputs.money == 'true'
+        run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every money leg on each rail
         id: walk
         if: needs.plan.outputs.money == 'true'
@@ -615,6 +618,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
+      - name: The harness, the sandbox Worker and the pinned commit are one commit
+        if: needs.plan.outputs.money == 'true'
+        run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every desktop leg on Linux
         id: walk
         if: needs.plan.outputs.money == 'true'
@@ -763,6 +769,9 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: node tooling/e2e/money/sandbox-paywall.mjs --open --by "$GITHUB_RUN_ID"
+      - name: The harness, the sandbox Worker and the pinned commit are one commit
+        if: needs.plan.outputs.money == 'true'
+        run: node tooling/e2e/money/preflight.mjs --one-commit "$NIKATRU_SHA"
       - name: Walk every desktop leg on Windows
         id: walk
         if: needs.plan.outputs.money == 'true'
