@@ -1117,13 +1117,19 @@ jobs:
           # tooling/i18n/pending.json `files` lists for that ARB; `= '{}'` refused
           # every new chassis key. Anything gen-l10n reports that pending.json does
           # not list still fails, and a missing pending.json excuses nothing.
-          node -e '
-            const fs = require("fs");
+          # ⏱ 2026-10-25 · flip batch 3: a base-language arb gen-l10n needs beside a tagged supported row
+          # (chassis_ku.arb beside chassis_ku_Arab.arb, genL10nBaseCodes) carries @@locale only, so gen-l10n
+          # reports every key of it; it is no locale's text and owes nothing. The set is the register's.
+          node --input-type=module -e '
+            import fs from "node:fs";
+            import { loadRegister, genL10nBaseCodes } from "./tooling/i18n/locales.mjs";
+            const base = new Set(genL10nBaseCodes(loadRegister(".")));
             const u = JSON.parse(fs.readFileSync("packages/design_system/chassis-l10n-untranslated.json", "utf8") || "{}");
             const files = fs.existsSync("tooling/i18n/pending.json")
               ? (JSON.parse(fs.readFileSync("tooling/i18n/pending.json", "utf8")).files || {}) : {};
             let bad = 0;
             for (const [code, keys] of Object.entries(u)) {
+              if (base.has(code)) continue;
               const owed = new Set(files[`packages/design_system/lib/src/l10n/chassis_${code}.arb`] || []);
               for (const k of keys) if (!owed.has(k)) { console.error(`untranslated, not pending: ${code} ${k}`); bad++; }
             }
