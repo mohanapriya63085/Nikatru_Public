@@ -2,7 +2,7 @@
 # Do not edit: `node tooling/ci/gen-public-shell.mjs --check` re-generates it and fails on any difference.
 env:
   NIKATRU_PRIVATE_REPO: nikatru-com/Nikatru_Private
-  NIKATRU_SHELL_FINGERPRINT: 92ea1020eb847a62cd4b7408cbcca6159a08c91bed2f14e1de80caa9aa393fa9
+  NIKATRU_SHELL_FINGERPRINT: 4ccd8ff4983cd9667820707a386bd8707e967f7bd1242f47bd3327dfb54d2ba6
 
 name: Part of CI · Deploy web
 
@@ -385,12 +385,7 @@ jobs:
         run: |
           set -uo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
-          out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$APP" --production-branch=main 2>&1)" && code=0 || code=$?
-          printf '%s\n' "$out"
-          if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$APP\"."; exit 0; fi
-          if grep -qiE 'already exists|\b8000002\b' <<<"$out"; then echo "Pages project \"$APP\" already exists — nothing to create."; exit 0; fi
-          echo "::error title=Pages project::could not ensure the Direct Upload Pages project \"$APP\" exists (wrangler exit ${code})."
-          exit 1
+          node tooling/web/pages-origin.mjs --ensure "$APP"
       - name: Prove app.yaml's pagesOrigin is the Pages project's own subdomain
         if: steps.plan.outputs.deploy == 'true'
         working-directory: .
@@ -570,12 +565,7 @@ jobs:
         run: |
           set -uo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
-          out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$PROJECT" --production-branch=main 2>&1)" && code=0 || code=$?
-          printf '%s\n' "$out"
-          if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$PROJECT\"."; exit 0; fi
-          if grep -qiE 'already exists|\b8000002\b' <<<"$out"; then echo "Pages project \"$PROJECT\" already exists — nothing to create."; exit 0; fi
-          echo "::error title=Pages project::could not ensure the Direct Upload Pages project \"$PROJECT\" exists (wrangler exit ${code})."
-          exit 1
+          node tooling/web/pages-origin.mjs --ensure "$PROJECT"
       - name: Put the rate-limit salt on the project
         if: steps.plan.outputs.deploy == 'true'
         env:
@@ -766,12 +756,7 @@ jobs:
         run: |
           set -uo pipefail
           node "$GITHUB_WORKSPACE/tooling/ops/npm-ci-retry.mjs" -- npm ci --ignore-scripts --prefix tooling/wrangler || { echo "::error title=Pages project::the tooling/wrangler island did not install from its lockfile."; exit 1; }
-          out="$(tooling/wrangler/node_modules/.bin/wrangler pages project create "$PROJECT" --production-branch=main 2>&1)" && code=0 || code=$?
-          printf '%s\n' "$out"
-          if [ "$code" -eq 0 ]; then echo "Created Direct Upload Pages project \"$PROJECT\"."; exit 0; fi
-          if grep -qiE 'already exists|\b8000002\b' <<<"$out"; then echo "Pages project \"$PROJECT\" already exists — nothing to create."; exit 0; fi
-          echo "::error title=Pages project::could not ensure the Direct Upload Pages project \"$PROJECT\" exists (wrangler exit ${code})."
-          exit 1
+          node tooling/web/pages-origin.mjs --ensure "$PROJECT"
       - name: Read the project's issued origin, and whether the public host is on it yet
         if: steps.plan.outputs.deploy == 'true'
         id: live

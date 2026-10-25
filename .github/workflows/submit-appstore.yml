@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Apple App Store"
 
-run-name: "Store submit: Apple App Store · ${{ inputs.app }} · ${{ inputs.confirm_ios }} · ${{ inputs.confirm_macos }}"
+run-name: "Store submit: Apple App Store · ${{ inputs.app }} · ${{ inputs.confirm_ios }} · ${{ inputs.confirm_macos }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -26,6 +26,11 @@ on:
         type: string
       listing_url:
         description: 'The App Store listing the upload is recorded against, https://apps.apple.com/app/id<the app.yaml recordId>. Required for an upload; ignored by the dry run.'
+        required: false
+        default: ''
+        type: string
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. A worker-slot run is the weekly dry run. Empty on a hand dispatch.'
         required: false
         default: ''
         type: string
@@ -216,11 +221,17 @@ jobs:
         env:
           APP_INPUT: ${{ inputs.app }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          STORE_WORDS: ${{ (inputs.confirm_ios != '' && inputs.confirm_ios != 'dry-run-only') || (inputs.confirm_macos != '' && inputs.confirm_macos != 'dry-run-only') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if [ "$EVENT_NAME" = schedule ]; then
+          if [ -n "$WORKER_SLOT" ] && [ "$STORE_WORDS" = true ]; then
+            echo "::error::a worker-slot run (${WORKER_SLOT}) is the weekly DRY RUN only, and this dispatch carries a store word"
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = schedule ] || [ -n "$WORKER_SLOT" ]; then
             apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
             APP_INPUT="$(node tooling/ci/scheduled-rehearsal.mjs --apps "$apps")"
           fi

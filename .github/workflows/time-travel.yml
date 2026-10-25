@@ -5,6 +5,8 @@ env:
 
 name: Time travel
 
+run-name: "Time travel${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -12,6 +14,11 @@ on:
         description: 'Run only this instant (ISO-8601 with a zone, e.g. 2027-11-05T00:00:00Z); empty runs the scheduled three'
         type: string
         default: ''
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false

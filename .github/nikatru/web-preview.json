@@ -34,5 +34,6 @@
         "web-preview.preview-site."
       ]
     }
-  ]
+  ],
+  "dispatchDetailUrl": "https://gh-bridge.nikatru.workers.dev/dispatch-detail"
 }

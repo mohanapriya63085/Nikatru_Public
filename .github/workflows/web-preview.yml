@@ -5,11 +5,18 @@ env:
 
 name: Web preview
 
-run-name: "Web preview · ${{ github.event.client_payload.sha }}"
+run-name: "Web preview · ${{ github.event.client_payload.sha }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   repository_dispatch:
     types: [ci]
+  workflow_dispatch:
+    inputs:
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Only a worker-slot dispatch of main runs the sweep.'
+        required: false
+        default: ''
+        type: string
   schedule:
     - cron: '41 3 * * *'
 
@@ -781,7 +788,7 @@ jobs:
   sweep:
     needs: [nikatru-pin]
     name: Delete expired pr-<n> previews
-    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && ((github.event.client_payload.event || github.event_name) == 'schedule' && vars.WEB_PREVIEWS == 'on')
+    if: (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request') && (((github.event.client_payload.event || github.event_name) == 'schedule' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.worker_slot != '')) && vars.WEB_PREVIEWS == 'on')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment: preview
@@ -821,6 +828,8 @@ jobs:
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
       - name: Refuse anything but the schedule on main
+        env:
+          WORKER_SLOT: ${{ inputs.worker_slot }}
         run: node tooling/ci/assert-deploy-ref.mjs --allow preview-sweep
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -875,7 +884,7 @@ jobs:
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
     needs: [plan, gate, preview-site, web-preview]
-    if: always() && github.event_name == 'repository_dispatch' && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request')
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1028,7 +1037,7 @@ jobs:
   nikatru-report:
     name: Report to the private repository (generated)
     needs: [plan, gate, preview-site, web-preview, nikatru-collect]
-    if: always() && github.event_name == 'repository_dispatch' && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request')
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || github.event.client_payload.event == 'pull_request')
     runs-on: ubuntu-24.04
     defaults:
       run:

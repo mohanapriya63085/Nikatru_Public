@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Google Play"
 
-run-name: "Store submit: Google Play · ${{ inputs.app }} · ${{ inputs.confirm }}"
+run-name: "Store submit: Google Play · ${{ inputs.app }} · ${{ inputs.confirm }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -48,6 +48,11 @@ on:
         options: ['none', '0.5', '1.0', 'halt', 'resume']
       listing_url:
         description: 'The Play listing URL this submission will be recorded against, e.g. https://play.google.com/store/apps/details?id=<applicationId>. Required for a real upload; ignored by the dry run.'
+        required: false
+        default: ''
+        type: string
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. A worker-slot run is the weekly dry run. Empty on a hand dispatch.'
         required: false
         default: ''
         type: string
@@ -238,11 +243,17 @@ jobs:
         env:
           APP_INPUT: ${{ inputs.app }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          STORE_WORDS: ${{ (inputs.confirm != '' && inputs.confirm != 'dry-run-only') || inputs.promote != 'none' || inputs.rollout_confirm != '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if [ "$EVENT_NAME" = schedule ]; then
+          if [ -n "$WORKER_SLOT" ] && [ "$STORE_WORDS" = true ]; then
+            echo "::error::a worker-slot run (${WORKER_SLOT}) is the weekly DRY RUN only, and this dispatch carries a store word"
+            exit 1
+          fi
+          if [ "$EVENT_NAME" = schedule ] || [ -n "$WORKER_SLOT" ]; then
             apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
             APP_INPUT="$(node tooling/ci/scheduled-rehearsal.mjs --apps "$apps")"
           fi
