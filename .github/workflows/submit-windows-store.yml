@@ -1164,6 +1164,9 @@ jobs:
     timeout-minutes: 30
     needs: [nikatru-pin, gate, dry-run]
     if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.confirm == 'SUBMIT-TO-MICROSOFT-STORE'
+    concurrency:
+      group: store-cadence
+      cancel-in-progress: false
     environment: store-publish
     permissions:
       contents: read
@@ -1409,6 +1412,9 @@ jobs:
     timeout-minutes: 15
     needs: [nikatru-pin, gate]
     if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.promote != 'none' && inputs.promote_confirm == 'ROLLOUT-MICROSOFT-STORE' && inputs.confirm != 'SUBMIT-TO-MICROSOFT-STORE'
+    concurrency:
+      group: store-cadence
+      cancel-in-progress: false
     environment: store-publish
     permissions:
       contents: read
