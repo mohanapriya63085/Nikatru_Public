@@ -590,7 +590,7 @@ jobs:
     needs: [detect, pool-sites]
     if: needs.detect.outputs.affected == 'true' && !contains(fromJSON(needs.pool-sites.outputs.adopted), 'sites')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
