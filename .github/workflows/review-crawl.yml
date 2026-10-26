@@ -15,9 +15,9 @@ on:
         type: string
         default: ''
       phase:
-        description: 'routes (every column scrolled + the tall capture), buttons (every control from a fresh load), or all'
+        description: 'routes (every column scrolled + the tall capture), buttons (every control from a fresh load), all (both), or faults (503 / aborted / offline on the fault sample: demo only)'
         type: choice
-        options: [all, routes, buttons]
+        options: [all, routes, buttons, faults]
         default: all
       matrix:
         description: 'all | smoke | viewport:scheme:locale,... (viewport desktop|phone|tablet, scheme light|dark, locale en|<a served code>|long|rtl|posix; * for any)'
