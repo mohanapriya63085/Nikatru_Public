@@ -58,9 +58,10 @@
 #
 #   report.py pr-meta       (the gate job's pre-read, before any private code) the private PR
 #                           as it is now through POST /pr-meta, signed with BRIDGE_READ_SECRET and
-#                           bound to this run, to NIKATRU_PR_META_FILE; red when the PR changes a
-#                           RUNNER_SOURCES file without the lead's RUNNER_LABEL (A7-05/A7-06), and
-#                           that wait recorded as the gate's HOLD, which send posts pending
+#                           bound to this run, to NIKATRU_PR_META_FILE; a PR that changes a
+#                           RUNNER_SOURCES file without the lead's RUNNER_LABEL (A7-05/A7-06) is a
+#                           wait recorded as the gate's HOLD (green step, `::warning`), which send
+#                           posts pending; the step output `meta` is `clear` only when it decided so
 #
 #   nikatru-report — the report secret; restores nothing, runs nothing another job
 #   wrote (assert-public-shell.mjs limb I). A fresh sparse checkout of this shell, then
@@ -151,14 +152,27 @@
 # ⏱ 2026-10-23 (ci-gate-holds, O-FIRST-PASS-AUDIT-LANE-FIXES decision 2): A HOLD IS PENDING, NOT A FAILURE. The
 # first-pass audit of 2026-10-17 counted a gate that only WAITS (a runner-source PR with no RUNNER_LABEL yet, which
 # the lane is told to ask for before its first run) as a red CI run, and the lane re-diagnosed a red that was a wait.
-# pr-meta now records such a wait as a `### HOLD <what>` section of the gate's detail (HOLD_HEADER) and STILL fails
-# its step, so the gate job's own result stays failure: a hold whose record is lost reads as the failure it always
-# was, never as a pass. `send` then posts the gate `pending` instead of `failure` only when the hold is the ONLY red
-# (held): every lane of the config reported success (the gate's `Require all lanes green`), the bundle was read, the
-# gate's detail carries a HOLD section and no `### RED` section (every quiet step of the gate passed). Anything else
-# stays failure. Pending is never green: a lander gates on success. The residual, said: a step of the gate that
-# fails with no detail at all (a checkout, the commit-naming check) beside a hold reads as the hold; the gate is
-# still pending, never success, and the next run after the label names that step.
+# pr-meta records such a wait as a `### HOLD <what>` section of the gate's detail (HOLD_HEADER), and `send` posts the
+# gate `pending` instead of `failure` only when the hold is the ONLY red (held): every lane of the config reported
+# success, the bundle was read, the gate's detail carries a HOLD section and no `### RED` section. Pending is never
+# green: a lander gates on success.
+#
+# ⏱ 2026-10-24 (ci-gate-hold-not-red, lead decision; supersedes "the step still fails" above): A LABEL WAIT IS NOT A
+# RED RUN. The pr-meta step failing on a hold kept the PUBLIC gate job, and so the whole run, at `failure` with every
+# lane green (#1037, #1049 run 40069468612, #1055 run 40079869892), and the owner read a red X for a wait. pr-meta
+# now ends a label-only hold at exit 0 with its `::warning` HOLD annotation, so the Public job and run are green. What
+# that exit used to buy, "a hold whose record is lost reads as the failure it always was", is now bought by a
+# POSITIVE signal instead: pr-meta writes the step output `meta` (GATE_CLEAR when it decided the PR is clear: no
+# RUNNER_SOURCES file touched, or the label present; GATE_HOLD on a hold; nothing when it cannot decide, exit 2), the
+# gate job carries it as `outputs.meta`, and the report job hands it to `send` as NIKATRU_GATE_META. For a config
+# whose gate reads the PR (`gateMeta`), a pull request's gate is posted `success` only when that signal is
+# GATE_CLEAR AND its detail carries no HOLD section (the second witness, cleared). A gate job that succeeded without
+# it — the output lost, the step skipped, pr-meta crashed before writing it, the hold record lost — posts `pending`
+# when it is held, else `failure`; never `success`. The other reds are unchanged: a RED section, a lane not green, a
+# lost bundle, pr-meta's exit 2. After the label, the existing gate-only re-run (pr-recheck.yml re-runs the gate job,
+# GitHub re-runs its dependents, the attempt reads only its own hand-offs) writes GATE_CLEAR, and the gate posts
+# success. The residual, said: the private status, not the Public run's colour, is the gate's verdict; a Public run
+# that is green on a hold reads pending privately, and the landers still refuse it.
 #
 # Exit 0 every report accepted (handoff: sealed, or nothing to hand over; collect: the
 # bundle written) · 1 a report refused or not delivered (a verdict that did not land
@@ -205,6 +219,10 @@ NOTE_HEADER = '### NOTE '
 # A red step's detail section (the quiet-step wrapper's detailSection), and a gate step that only WAITS (pr-meta).
 RED_HEADER = '### RED '
 HOLD_HEADER = '### HOLD '
+# ⏱ 2026-10-24 · ci-gate-hold-not-red: pr-meta's step output `meta` — the POSITIVE clear a gate's success needs
+# (cleared), or the hold it recorded. Any other value, or none, is not clear.
+GATE_CLEAR = 'clear'
+GATE_HOLD = 'hold'
 # The agent every POST to the bridge names (B1): never urllib's default, which the edge bans.
 USER_AGENT = 'nikatru-shell-report/1'
 COLLECTED_DIR = '.nikatru-collected'
@@ -666,6 +684,15 @@ def held(item, cfg, results, detail, lost):
     return all(results.get(lane['job']) == 'success' for lane in cfg['lanes'])
 
 
+def cleared(item, cfg, env, detail):
+    """⏱ 2026-10-24 · ci-gate-hold-not-red: False when a gate whose job succeeded may not be posted success: a
+    pull request's gate in a config whose gate reads the PR (`gateMeta`), without pr-meta's POSITIVE clear
+    (NIKATRU_GATE_META == GATE_CLEAR), or with a HOLD section in its detail all the same. True for everything else."""
+    if not is_gate(item, cfg) or cfg.get('gateMeta') is not True or env.get('NIKATRU_P_EVENT', '') != 'pull_request':
+        return True
+    return env.get('NIKATRU_GATE_META', '') == GATE_CLEAR and not sections_of(detail, HOLD_HEADER)
+
+
 def build(context, state, env, detail, gate=False):
     run_id, attempt = int(env['GITHUB_RUN_ID']), int(env['GITHUB_RUN_ATTEMPT'])
     body = {
@@ -907,6 +934,12 @@ def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
         detail = details.get(item['context'], '')
         if state == 'failure' and held(item, cfg, results, detail, lost):
             state = 'pending'
+        elif state == 'success' and not cleared(item, cfg, env, detail):
+            # ⏱ 2026-10-24 · ci-gate-hold-not-red: a green gate job is not a green gate without pr-meta's clear.
+            state = 'pending' if held(item, cfg, results, detail, lost) else 'failure'
+            if state == 'failure':
+                print(f"x  {item['context']}: the gate job succeeded without pr-meta's clear "
+                      f"(meta {env.get('NIKATRU_GATE_META', '')[:20]!r}, and no hold this report can read): posted failure, never success")
         status, why = post(url, secret, build(item['context'], state, env, detail, is_gate(item, cfg)), cfg['postTimeoutS'], opener)
         ok = 200 <= status < 300
         failed += 0 if ok else 1
@@ -1078,9 +1111,10 @@ def read_pr_meta(env, opener=urllib.request.urlopen, now=time.time, sleep=time.s
 
 
 def pr_meta(env, opener=urllib.request.urlopen, run=subprocess.run, now=time.time, sleep=time.sleep):
-    """The gate's pre-read: the answer (or {"lost": why}) to NIKATRU_PR_META_FILE; exit 1 when the PR changes a
-    RUNNER_SOURCES file without RUNNER_LABEL, 2 when that cannot be decided. A lost read alone exits 0: the body
-    step turns it into COVERAGE LOST with its reason."""
+    """The gate's pre-read: the answer (or {"lost": why}) to NIKATRU_PR_META_FILE, and the step output `meta`:
+    GATE_CLEAR when no RUNNER_SOURCES file changed or RUNNER_LABEL is on the PR, GATE_HOLD (exit 0, a HOLD section,
+    a `::warning`) when one changed without it, nothing and exit 2 when that cannot be decided. A lost read alone
+    exits 0: the body step turns it into COVERAGE LOST with its reason."""
     out = env.get('NIKATRU_PR_META_FILE', '')
     if not out:
         raise Lost('NIKATRU_PR_META_FILE is not set: nowhere to put the read')
@@ -1093,6 +1127,7 @@ def pr_meta(env, opener=urllib.request.urlopen, run=subprocess.run, now=time.tim
         print('x COVERAGE LOST - report.py: which shell-run files this pull request changes could not be read (git diff HEAD^1 HEAD)', file=sys.stderr)
         return 2
     if not touched:
+        gate_meta(env, GATE_CLEAR)
         return 0
     if answer is None:
         print(f'x COVERAGE LOST - report.py: this pull request changes {", ".join(touched)}, and its labels could not be read: {why}', file=sys.stderr)
@@ -1100,14 +1135,26 @@ def pr_meta(env, opener=urllib.request.urlopen, run=subprocess.run, now=time.tim
     labels = answer.get('labels')
     if isinstance(labels, list) and RUNNER_LABEL in labels:
         print(f'ok pr-meta: {", ".join(touched)} changed, and the PR carries {RUNNER_LABEL} — {RUNNER_LABEL_ADVISORY}')
+        gate_meta(env, GATE_CLEAR)
         return 0
-    # ⏱ 2026-10-23 · ci-gate-holds: a WAIT, recorded as the gate's HOLD (send posts it pending when it is the only red);
-    # the step still fails, so a hold whose record is lost is the failure it always was.
+    # ⏱ 2026-10-23 · ci-gate-holds: a WAIT, recorded as the gate's HOLD (send posts it pending when it is the only red).
+    # ⏱ 2026-10-24 · ci-gate-hold-not-red: the step passes (the Public run is green), and the gate's private success
+    # needs GATE_CLEAR, which a hold never writes: a hold whose record is lost is still never success (cleared).
     why = (f'this pull request changes {", ".join(touched)}, which every shell job runs as the shell\'s own copy after the merge; '
            f'it waits on a lead adding the label {RUNNER_LABEL} to the private PR (then re-run ci-gate)')
     hold_detail(env, f'the label {RUNNER_LABEL}', why)
+    gate_meta(env, GATE_HOLD)
     print(f'::warning title=ci-gate HOLD (pending, not a failure)::{why}')
-    return 1
+    return 0
+
+
+def gate_meta(env, value):
+    """The step output `meta` (GITHUB_OUTPUT), which the gate job carries to the report job as `outputs.meta`."""
+    out = env.get('GITHUB_OUTPUT', '')
+    if not out:
+        return
+    with open(out, 'a', encoding='utf-8') as f:
+        f.write(f'meta={value}\n')
 
 
 def hold_detail(env, what, why):
