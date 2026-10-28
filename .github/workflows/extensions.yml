@@ -1322,6 +1322,28 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-branded.4 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+      - name: RED CONTROL — content/capture.js made to throw fails the capture
+        if: hashFiles(format('extensions/{0}/test/e2e/packed-lib.mjs', matrix.suite.dir)) != ''
+        working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
+        env:
+          FS_E2E_CHANNEL: ${{ matrix.channel }}
+          FS_E2E_ONLY: appshell
+          HEADFUL: '1'
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set +e
+          FS_E2E_CAPTURE_BROKEN=1 node run.mjs > "$RUNNER_TEMP/capture-red.log" 2>&1
+          code=$?
+          set -e
+          cat "$RUNNER_TEMP/capture-red.log"
+          echo "run.mjs exit: $code"
+          if [ "$code" -ne 1 ]; then echo "::error::run.mjs exited $code with content/capture.js made to throw; the red control requires exactly 1"; exit 1; fi
+          if ! grep -qF 'RED CONTROL  FS_E2E_CAPTURE_BROKEN=1: the test copy/content/capture.js' "$RUNNER_TEMP/capture-red.log"; then echo "::error::run.mjs exited 1 without packed-lib.mjs applying the capture red control"; exit 1; fi
+          if ! grep -qF 'FAIL  appshell capture completed' "$RUNNER_TEMP/capture-red.log"; then echo "::error::run.mjs exited 1 without its capture check's FAIL line"; exit 1; fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-branded.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Run every suite that opts into the branded leg (derived, not listed)
         working-directory: extensions/${{ matrix.suite.dir }}/test/e2e
         env:
@@ -1373,7 +1395,7 @@ jobs:
           '
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-branded.5 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.e2e-branded.6 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -3112,7 +3134,7 @@ jobs:
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
     needs: [ci, e2e-suite, e2e-branded, release, attest, store-publish, cws-token-keepalive, store-key-keepalive, scheduled-proof-fresh, extensions-lane-accounting]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -3265,7 +3287,7 @@ jobs:
   nikatru-report:
     name: Report to the private repository (generated)
     needs: [ci, e2e-suite, e2e-branded, release, attest, store-publish, cws-token-keepalive, store-key-keepalive, scheduled-proof-fresh, extensions-lane-accounting, nikatru-collect]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule') && (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v')))
     runs-on: ubuntu-24.04
     defaults:
       run:

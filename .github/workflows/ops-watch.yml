@@ -584,6 +584,31 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Mark this period's weekly readers as run
+        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && (needs.status.outputs.weekly == 'true' || needs.status.outputs.twice == 'true') && needs.status.outputs.week != '' }}
+        env:
+          WEEK: ${{ needs.status.outputs.week }}
+          HALF: ${{ needs.status.outputs.half }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          mkdir -p .cache/ops-watch-weekly
+          printf '%s %s %s\n' "$WEEK" "$HALF" "$GITHUB_RUN_ID" > .cache/ops-watch-weekly/marker
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Save this ISO week's weekly marker
+        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && needs.status.outputs.weekly == 'true' && needs.status.outputs.week != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-weekly-${{ needs.status.outputs.week }}
+      - name: Save this half week's marker
+        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && needs.status.outputs.twice == 'true' && needs.status.outputs.week != '' && needs.status.outputs.half != '' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-twice-${{ needs.status.outputs.week }}-${{ needs.status.outputs.half }}
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -602,6 +627,11 @@ jobs:
     name: Every enumerated surface produced its expected output
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      weekly: ${{ steps.due.outputs.weekly }}
+      twice: ${{ steps.due.outputs.twice }}
+      week: ${{ steps.period.outputs.week }}
+      half: ${{ steps.period.outputs.half }}
     permissions:
       contents: read
       id-token: write
@@ -706,6 +736,46 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: The ISO week and half week this run falls in
+        id: period
+        if: ${{ !cancelled() }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/ops-watch-weekly-slot.mjs --periods
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Has this ISO week's weekly run happened
+        id: weekly-hit
+        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && steps.period.outputs.week != '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-weekly-${{ steps.period.outputs.week }}
+          lookup-only: true
+      - name: Has this half week's run happened
+        id: twice-hit
+        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && steps.period.outputs.week != '' && steps.period.outputs.half != '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .cache/ops-watch-weekly
+          key: ops-watch-twice-${{ steps.period.outputs.week }}-${{ steps.period.outputs.half }}
+          lookup-only: true
+      - name: Which weekly readers are due
+        id: due
+        if: ${{ !cancelled() }}
+        env:
+          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          WEEKLY_HIT: ${{ steps.weekly-hit.outputs.cache-hit }}
+          TWICE_HIT: ${{ steps.twice-hit.outputs.cache-hit }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/ops-watch-weekly-slot.mjs --decide --event "$EVENT" --weekly-hit "${WEEKLY_HIT:-false}" --twice-hit "${TWICE_HIT:-false}"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1729,9 +1799,9 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   edge-shield:
-    needs: [nikatru-pin]
     name: The edge shield is still in front of Box B and Box C
-    if: github.event.schedule == '45 7 * * 1' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch'
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
@@ -1937,9 +2007,9 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   failure-ledger:
-    needs: [nikatru-pin]
     name: Failed-run ledger and guard yield (weekly; red pages the ops-watch issue)
-    if: github.event.schedule == '45 7 * * 1' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.failure_ledger)
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.failure_ledger)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     permissions:
@@ -2102,9 +2172,9 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   renovate-backlog:
-    needs: [nikatru-pin]
     name: The Renovate queue drains at least as fast as it fills
-    if: github.event.schedule == '45 7 * * 1' || github.event.schedule == '45 7 * * 4' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.renovate_backlog)
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.renovate_backlog)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -2213,9 +2283,9 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   code-scanning-age:
-    needs: [nikatru-pin]
     name: No high or critical code-scanning alert stands untriaged past its window
-    if: github.event.schedule == '45 7 * * 1' || github.event.schedule == '45 7 * * 4' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.code_scanning_age)
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.code_scanning_age)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -2335,9 +2405,9 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   tech-currency:
-    needs: [nikatru-pin]
     name: What the pipeline runs on is not being retired by its vendors
-    if: github.event.schedule == '45 7 * * 1' || github.event.schedule == '45 7 * * 4' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.tech_currency)
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.tech_currency)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -2461,9 +2531,9 @@ jobs:
         run: node tooling/ops/bridge-artifact.mjs upload
 
   self-review:
-    needs: [nikatru-pin]
     name: Weekly self-review — the factory measured, three proposals filed and never applied
-    if: github.event.schedule == '45 7 * * 1' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.self_review)
+    needs: [nikatru-pin, status]
+    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.self_review)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -2759,8 +2829,8 @@ jobs:
 
   digest:
     name: Weekly digest
-    needs: [nikatru-pin, failure-ledger]
-    if: always() && (github.event.schedule == '45 7 * * 1' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.digest))
+    needs: [nikatru-pin, status, failure-ledger]
+    if: always() && (needs.status.outputs.weekly == 'true' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.digest))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

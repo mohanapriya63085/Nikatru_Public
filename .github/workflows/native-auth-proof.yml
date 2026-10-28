@@ -5,7 +5,7 @@ env:
 
 name: Native auth proof
 
-run-name: "Native auth proof · ${{ inputs.app }}"
+run-name: "Native auth proof · ${{ inputs.app }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   schedule:
@@ -32,6 +32,16 @@ on:
         options:
           - token
           - form
+      private_pr:
+        description: "A private_ref branch run only: the number of the private pull request whose head that branch is (its CI run is the gate). Empty for main."
+        required: false
+        default: ''
+        type: string
+      private_ref:
+        description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: native-auth-proof-${{ (github.event.client_payload.event || github.event_name) == 'schedule' && '(schedule)' || inputs.app }}
@@ -59,7 +69,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || 'main') }}
+          ref: ${{ (github.event.client_payload.event == 'pull_request' && github.event.client_payload.bridge.merge_state == 'ready' && github.event.client_payload.bridge.merge_sha) || (github.event.client_payload.event == 'pull_request' && format('refs/pull/{0}/merge', github.event.client_payload.pr) || github.event.client_payload.sha || inputs.private_ref || 'main') }}
           sparse-checkout: .github/ISSUE_TEMPLATE
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
@@ -138,13 +148,42 @@ jobs:
           echo "pinned $NIKATRU_PINNED"
           echo "sha=$NIKATRU_PINNED" >> "$GITHUB_OUTPUT"
 
-  gate:
+  nikatru-approve:
+    name: Wait for a reviewer before unmerged code meets production credentials (generated) · private commit ${{ needs.nikatru-pin.outputs.sha }}
     needs: [nikatru-pin]
-    name: The app input names one app of the workspace
+    if: (inputs.private_ref || '') != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ${{ github.workspace }}
+    timeout-minutes: 5
+    environment: store-publish
     permissions:
       contents: read
+    steps:
+      - name: Check out nothing of the private tree but its issue templates (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          sparse-checkout: .github/ISSUE_TEMPLATE
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+      - name: Name what a reviewer approved (generated)
+        shell: bash
+        env:
+          NIKATRU_PINNED: ${{ needs.nikatru-pin.outputs.sha }}
+        run: echo "approved a run of the pinned private commit $NIKATRU_PINNED"
+
+  gate:
+    needs: [nikatru-pin, nikatru-approve]
+    name: The app input names one app of the workspace
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      checks: read
       actions: read
       id-token: write
     outputs:
@@ -164,7 +203,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -204,6 +243,38 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+      - name: ci-gate passed for this commit (a branch run)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          PRIVATE_PR: ${{ inputs.private_pr }}
+          REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --schedule-lookback 20 --event "$EVENT_NAME" --output sha --pr "$PRIVATE_PR" --ref "$REF"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app input names one app of the workspace
         id: app
         env:
@@ -222,7 +293,7 @@ jobs:
           echo "apps=${apps}" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Did a Darwin input change since this app's last green proof
         id: darwin
         env:
@@ -256,7 +327,7 @@ jobs:
           fi
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.3 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.5 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -272,7 +343,8 @@ jobs:
 
   android:
     name: Android — emulator, form to Home, adb opens the callback
-    needs: [nikatru-pin, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
@@ -300,7 +372,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -372,6 +444,7 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
         with:
+          cache: 'false'
           android-ndk: 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
@@ -542,12 +615,12 @@ jobs:
 
   ios:
     name: iOS — simulator, form to Home, the app opens its own callback
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.gate.outputs.darwin == 'true'
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
@@ -571,7 +644,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -642,6 +715,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
         working-directory: apps/${{ matrix.app }}
@@ -775,12 +850,12 @@ jobs:
 
   macos:
     name: macOS — the .app, form to Home, LaunchServices opens the callback
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.gate.outputs.darwin == 'true'
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -804,7 +879,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -875,6 +950,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
       - name: Enable the macOS desktop target
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -973,7 +1050,8 @@ jobs:
 
   windows:
     name: Windows — form to Home (callback needs the MSIX, proven off-runner)
-    needs: [nikatru-pin, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
@@ -1004,7 +1082,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -1075,6 +1153,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
       - name: Git may write paths past MAX_PATH
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -1183,7 +1263,8 @@ jobs:
 
   linux:
     name: Linux — the bundle under xvfb, form to Home, xdg-open opens the callback
-    needs: [nikatru-pin, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
@@ -1211,7 +1292,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -1282,27 +1363,34 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
-      - name: Check out private main's composite actions (generated)
-        if: env.PROOF_NEEDS_DEVICE == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: env.PROOF_NEEDS_DEVICE == 'true'
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+          cache: 'false'
       - name: Linux build and session deps
         if: env.PROOF_NEEDS_DEVICE == 'true'
         timeout-minutes: 9
-        uses: ./.nikatru-trusted/.github/actions/cached-install
-        with:
-          install: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
+            xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.linux.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Enable the Linux desktop target
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -1367,7 +1455,8 @@ jobs:
           node tooling/e2e/native_auth_proof.mjs --app "$APP" --target linux --log "$E2E_PROOF_LOG" --expect-refusal
           dbus-run-session -- bash -c '
             set -euo pipefail
-            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets)"
+            # why a throwaway password: gnome-keyring makes the login collection only from a NON-EMPTY one (money-sandbox-legs.yml, the walk step).
+            eval "$(head -c 24 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
             export GNOME_KEYRING_CONTROL
             xvfb-run -a -s "-screen 0 1920x1200x24" \
               node tooling/e2e/native_auth_proof.mjs --app "$APP" --target linux --device linux --log "$E2E_PROOF_LOG" --callback --sign-in token --pending-flows "$PENDING_FLOWS"
@@ -1408,7 +1497,8 @@ jobs:
 
   android-oauth-return:
     name: Android — emulator, adb hands the app an OAuth return
-    needs: [nikatru-pin, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
@@ -1434,7 +1524,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -1506,6 +1596,7 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
         with:
+          cache: 'false'
           android-ndk: 'true'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
@@ -1614,12 +1705,12 @@ jobs:
 
   ios-oauth-return:
     name: iOS — simulator, the app opens its own OAuth return
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.gate.outputs.darwin == 'true'
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -1641,7 +1732,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -1712,6 +1803,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
       - name: flutter pub get
         if: env.PROOF_NEEDS_DEVICE == 'true'
         working-directory: apps/${{ matrix.app }}
@@ -1782,12 +1875,12 @@ jobs:
 
   macos-oauth-return:
     name: macOS — the .app, LaunchServices hands it an OAuth return
-    needs: [nikatru-pin, gate]
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.gate.outputs.apps) }}
-    if: needs.gate.outputs.darwin == 'true'
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success' && (needs.gate.outputs.darwin == 'true')
     runs-on: macos-26
     timeout-minutes: 45
     permissions:
@@ -1809,7 +1902,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -1880,6 +1973,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
       - name: Enable the macOS desktop target
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -1933,7 +2028,8 @@ jobs:
 
   windows-oauth-return:
     name: Windows — a second copy forwards an OAuth return to the app
-    needs: [nikatru-pin, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
@@ -1962,7 +2058,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -2033,6 +2129,8 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
+        with:
+          cache: 'false'
       - name: Git may write paths past MAX_PATH
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -2096,7 +2194,8 @@ jobs:
 
   linux-oauth-return:
     name: Linux — the bundle under xvfb, xdg-open hands it an OAuth return
-    needs: [nikatru-pin, gate]
+    if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure() && needs.gate.result == 'success'
+    needs: [nikatru-pin, nikatru-approve, gate]
     strategy:
       fail-fast: false
       matrix:
@@ -2122,7 +2221,7 @@ jobs:
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
-          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main' }}
           NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
           NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
           NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
@@ -2193,27 +2292,34 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
         if: env.PROOF_NEEDS_DEVICE == 'true'
-      - name: Check out private main's composite actions (generated)
-        if: env.PROOF_NEEDS_DEVICE == 'true'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: refs/heads/main
-          path: .nikatru-trusted
-          sparse-checkout: .github/actions
-          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
-          persist-credentials: false
-      - name: Keep private main's composite actions out of the branch's tree (generated)
-        if: env.PROOF_NEEDS_DEVICE == 'true'
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+          cache: 'false'
       - name: Linux build and session deps
         if: env.PROOF_NEEDS_DEVICE == 'true'
         timeout-minutes: 9
-        uses: ./.nikatru-trusted/.github/actions/cached-install
-        with:
-          install: sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          # why the guard: ⏱ 2026-10-23 (lead, run 39978965907) — a branch run builds a checkout that may predate #981's
+          # tooling/ops/ci-install-cache.mjs; without it the install runs plain and bounded (no cache), never a missing module.
+          cached_install() {
+            if [ -f "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" ]; then
+              node "$GITHUB_WORKSPACE/tooling/ops/ci-install-cache.mjs" run --cache-dir "${DEBS_DIR:-$RUNNER_TEMP/ci-install-debs}" --attempt-minutes "${ATTEMPT_MINUTES:-4}" -- "$@"
+              return
+            fi
+            bound="$(awk -v m="${ATTEMPT_MINUTES:-4}" 'BEGIN { print int(m * 120) + 1 }')"
+            echo "::warning title=Install uncached::this checkout has no tooling/ops/ci-install-cache.mjs (it predates #981): $* runs uncached, bounded at ${bound} s"
+            if [ "$1" = sudo ]; then timeout -k 15 "$bound" sudo apt-get update; fi
+            timeout -k 15 "$bound" "$@"
+          }
+          cached_install \
+            sudo apt-get install -y \
+            clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libsecret-1-dev libjsoncpp-dev libcurl4-openssl-dev \
+            xvfb gnome-keyring dbus-x11 desktop-file-utils xdg-utils
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.linux-oauth-return.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Enable the Linux desktop target
         if: env.PROOF_NEEDS_DEVICE == 'true'
         run: |
@@ -2250,7 +2356,8 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           dbus-run-session -- bash -c '
             set -euo pipefail
-            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets)"
+            # why a throwaway password: gnome-keyring makes the login collection only from a NON-EMPTY one (money-sandbox-legs.yml, the walk step).
+            eval "$(head -c 24 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
             export GNOME_KEYRING_CONTROL
             xvfb-run -a -s "-screen 0 1920x1200x24" \
               node tooling/e2e/native_auth_proof.mjs --app "$APP" --target linux --device linux --log native-oauth-return.log --oauth-return

@@ -5,7 +5,7 @@ env:
 
 name: Store screenshots
 
-run-name: "Store screenshots · ${{ inputs.app }}"
+run-name: "Store screenshots · ${{ inputs.app }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -35,6 +35,11 @@ on:
         required: false
         default: false
         type: boolean
+      private_pr:
+        description: "A private_ref branch run only: the number of the private pull request whose head that branch is (its CI run is the gate). Empty for main."
+        required: false
+        default: ''
+        type: string
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false
@@ -174,12 +179,14 @@ jobs:
     name: The app input names one app of the workspace
     if: needs.nikatru-pin.result == 'success' && (needs.nikatru-approve.result == 'success' || (needs.nikatru-approve.result == 'skipped' && !((inputs.private_ref || '') != ''))) && !cancelled() && !failure()
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      app: ${{ steps.app.outputs.app }}
+    timeout-minutes: 25
     permissions:
       contents: read
+      checks: read
+      actions: read
       id-token: write
+    outputs:
+      app: ${{ steps.app.outputs.app }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -246,21 +253,38 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: A branch run is a dry run
+      - name: Check out private main's composite actions (generated)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
+      - name: ci-gate passed for this commit (a branch run)
+        if: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' || inputs.private_pr != '' }}
         env:
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          PRIVATE_PR: ${{ inputs.private_pr }}
           REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
-          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          set -euo pipefail
-          if [ "$REF" != "refs/heads/main" ] && [ "$DRY_RUN" != "true" ]; then
-            echo "::error title=Refused::'$REF' is a branch: a branch run proposes nothing, so dispatch it with -f dry_run=true."
-            exit 1
-          fi
+          node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --event "$EVENT_NAME" --pr "$PRIVATE_PR" --ref "$REF"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.gate.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -549,7 +573,8 @@ jobs:
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          node tooling/sites/render-og-card.mjs --site nikatru --changed --chromium "$(command -v google-chrome)" > "${RUNNER_TEMP}/og-cards.txt"
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium-browser)"
+          node tooling/sites/render-og-card.mjs --site nikatru --changed --chromium "$chrome" > "${RUNNER_TEMP}/og-cards.txt"
           cat "${RUNNER_TEMP}/og-cards.txt"
           echo "paths=$(tr '\n' ' ' < "${RUNNER_TEMP}/og-cards.txt")" >> "$GITHUB_OUTPUT"
           NIKATRU_QUIET_EOF
@@ -591,7 +616,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store play-screenshots-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -609,7 +634,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Store dry-run-android-play-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ inputs.dry_run }}
+        if: ${{ inputs.dry_run || (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -627,7 +652,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Propose the set for human review (pull request)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         env:
           NIKATRU_PROPOSE_PATHS: apps/${{ needs.gate.outputs.app }}/store/android-play/screenshots apps/${{ needs.gate.outputs.app }}/store/android-play/screenshots-tablet ${{ steps.finish.outputs.paths }} ${{ steps.site.outputs.paths }} ${{ steps.og.outputs.paths }}
           NIKATRU_PROPOSE_BRANCH: chore/play-screenshots-${{ github.run_id }}
@@ -924,7 +949,8 @@ jobs:
           set -euo pipefail
           dbus-run-session -- bash -c '
             set -euo pipefail
-            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets)"
+            # why a throwaway password: gnome-keyring makes the login collection only from a NON-EMPTY one (money-sandbox-legs.yml, the walk step).
+            eval "$(head -c 24 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
             export GNOME_KEYRING_CONTROL
             xvfb-run -a -s "-screen 0 2560x1600x24" \
               node tooling/store/capture-deadline.mjs --minutes 20 -- \
@@ -995,7 +1021,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-linux.19 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store snap-screenshots-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1006,7 +1032,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Store dry-run-linux-snap-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ inputs.dry_run }}
+        if: ${{ inputs.dry_run || (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1017,7 +1043,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Propose the set for human review (pull request)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         env:
           NIKATRU_PROPOSE_PATHS: ${{ steps.reg.outputs.dir }} ${{ steps.finish.outputs.paths }}
           NIKATRU_PROPOSE_BRANCH: chore/linux-snap-screenshots-${{ github.run_id }}
@@ -1376,7 +1402,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-desktop-native.18 -- "$NIKATRU_SHELL" --noprofile --norc -eo pipefail "$NIKATRU_QUIET"
       - name: Store ${{ inputs.channel }}-screenshots-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1387,7 +1413,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Store dry-run-${{ inputs.channel }}-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ inputs.dry_run }}
+        if: ${{ inputs.dry_run || (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1398,7 +1424,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Propose the set for human review (pull request)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         env:
           NIKATRU_PROPOSE_PATHS: ${{ steps.reg.outputs.dir }} ${{ steps.finish.outputs.paths }}
           NIKATRU_PROPOSE_BRANCH: chore/${{ inputs.channel }}-screenshots-${{ github.run_id }}
@@ -1791,7 +1817,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name store-screenshots.capture-ios.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store ios-screenshots-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1805,7 +1831,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Store dry-run-ios-appstore-${{ needs.gate.outputs.app }} in the bridge's private home (generated)
-        if: ${{ inputs.dry_run }}
+        if: ${{ inputs.dry_run || (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') != 'refs/heads/main' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
@@ -1819,7 +1845,7 @@ jobs:
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
         run: node tooling/ops/bridge-artifact.mjs upload
       - name: Propose the sets for human review (pull request)
-        if: ${{ !inputs.dry_run }}
+        if: ${{ !inputs.dry_run && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main' }}
         env:
           NIKATRU_PROPOSE_PATHS: ${{ steps.reg.outputs.dirs }} ${{ steps.finish.outputs.paths }} apps/${{ needs.gate.outputs.app }}/store/ios-appstore/iap-review
           NIKATRU_PROPOSE_BRANCH: chore/ios-screenshots-${{ github.run_id }}
@@ -2018,7 +2044,8 @@ jobs:
           set -euo pipefail
           dbus-run-session -- bash -c '
             set -euo pipefail
-            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets)"
+            # why a throwaway password: gnome-keyring makes the login collection only from a NON-EMPTY one (money-sandbox-legs.yml, the walk step).
+            eval "$(head -c 24 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
             export GNOME_KEYRING_CONTROL
             xvfb-run -a -s "-screen 0 2560x1920x24" \
               node tooling/store/record-promo-video.mjs --app "$APP" --locales en --out "${RUNNER_TEMP}/promo-video"

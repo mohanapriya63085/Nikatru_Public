@@ -141,6 +141,11 @@
 # the quiet step wrapper masked when it captured it; this log prints only the HTTP status. Red jobs with no detail
 # handed over still post their names; nothing red and nothing lost posts nothing. A 409 is the bridge saying
 # this attempt's detail is already filed (the fallback step after a send that died past its post): not a failure.
+# ⏱ 2026-10-24 (O-SCHEDULED-RUN-RED-DETAIL-NEVER-DELIVERED): A SCHEDULED RUN'S TOO. Such a root that also runs on a
+# clock (e2e, codeql, extensions, build-platforms) sealed its scheduled run's red detail into hand-offs that no job
+# collected — its report job ran only on a dispatch — so the public log's `RED <step> exit N` was all anyone saw. The
+# generator now runs the pair on `schedule` too (reportEventIf `scheduled`), and `send` files that run's detail at the
+# same door, the same way (UNDISPATCHED_EVENTS): masked by the wrapper, fenced as data, never printed here.
 #
 # ⏱ 2026-10-08 (gitleaks-pr-scoped-r2, review 26acc3ec finding 2): A GREEN GATE CAN CARRY NOTES. A
 # quiet step's `::nikatru-detail::` line lands in its job's detail as a `### NOTE <step>` section on a
@@ -863,8 +868,15 @@ def dispatch_detail(details, lost, results, cfg):
     return join_detail(sections)
 
 
+# The runs of the SHELL's own events that dispatched no private commit, so they write no status and file their red
+# detail at the private home instead (POST /dispatch-detail): a manual run, and ⏱ 2026-10-24 ·
+# O-SCHEDULED-RUN-RED-DETAIL-NEVER-DELIVERED a scheduled one, whose hand-offs used to reach nobody.
+UNDISPATCHED_EVENTS = ('workflow_dispatch', 'schedule')
+
+
 def send_dispatch(env, cfg, opener=urllib.request.urlopen):
-    """A workflow_dispatch run: no status (no private commit was dispatched), its red detail to the private home."""
+    """A workflow_dispatch or schedule run: no status (no private commit was dispatched), its red detail to the private home."""
+    event = env.get('GITHUB_EVENT_NAME', '')
     url = cfg.get('dispatchDetailUrl')
     if not url:
         raise Lost('the config names no dispatchDetailUrl: this root does not declare workflow_dispatch to the generator')
@@ -881,22 +893,22 @@ def send_dispatch(env, cfg, opener=urllib.request.urlopen):
         with open(env['GITHUB_OUTPUT'], 'a', encoding='utf-8') as f:
             f.write('reported=true\n')
     if not detail.strip():
-        print('-- workflow_dispatch run: nothing red and no detail; nothing sent to the private home')
+        print(f'-- {event} run: nothing red and no detail; nothing sent to the private home')
         return 0
     body = {'run_id': int(env['GITHUB_RUN_ID']), 'run_attempt': int(env['GITHUB_RUN_ATTEMPT']), 'detail': fit_bytes(detail, DETAIL_MAX_BYTES)}
     status, why = post(url, secret, body, cfg['postTimeoutS'], opener)
     if 200 <= status < 300 or status == 409:
-        print(f'ok workflow_dispatch red detail -> HTTP {status} (filed privately{"; already filed for this attempt" if status == 409 else ""})')
+        print(f'ok {event} red detail -> HTTP {status} (filed privately{"; already filed for this attempt" if status == 409 else ""})')
         if lost:
             print(f'x COVERAGE LOST - report.py: {lost}', file=sys.stderr)
             return 2
         return 0
-    print(f"x  workflow_dispatch red detail -> HTTP {status}{f' ({why})' if why else ''}")
+    print(f"x  {event} red detail -> HTTP {status}{f' ({why})' if why else ''}")
     return 1
 
 
 def send(env, cfg, opener=urllib.request.urlopen, clock=time.monotonic):
-    if env.get('GITHUB_EVENT_NAME') == 'workflow_dispatch':
+    if env.get('GITHUB_EVENT_NAME') in UNDISPATCHED_EVENTS:
         return send_dispatch(env, cfg, opener)
     url = cfg.get('bridgeUrl')
     if not url:

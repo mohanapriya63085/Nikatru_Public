@@ -1238,7 +1238,8 @@ jobs:
           fi
           dbus-run-session -- bash -c '
             set -euo pipefail
-            eval "$(printf "" | gnome-keyring-daemon --unlock --components=secrets)"
+            # why a throwaway password: gnome-keyring makes the login collection only from a NON-EMPTY one (money-sandbox-legs.yml, the walk step).
+            eval "$(head -c 24 /dev/urandom | base64 | gnome-keyring-daemon --unlock --components=secrets)"
             export GNOME_KEYRING_CONTROL
             xvfb-run -a -s "-screen 0 1920x1200x24" \
               node tooling/e2e/native_auth_proof.mjs --app "$APP" --target linux --device linux --log "$E2E_PROOF_LOG" --callback --sign-in "$SIGN_IN" --pending-flows "$PENDING_FLOWS"
@@ -1606,7 +1607,7 @@ jobs:
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
     needs: [prepare, e2e]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1759,7 +1760,7 @@ jobs:
   nikatru-report:
     name: Report to the private repository (generated)
     needs: [prepare, e2e, nikatru-collect]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
     runs-on: ubuntu-24.04
     defaults:
       run:
