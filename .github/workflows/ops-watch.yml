@@ -1801,7 +1801,7 @@ jobs:
   edge-shield:
     name: The edge shield is still in front of Box B and Box C
     needs: [nikatru-pin, status]
-    if: ${{ !cancelled() && (needs.status.outputs.weekly == 'true' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') }}
+    if: ${{ !cancelled() && (needs.status.outputs.twice == 'true' || (github.event.client_payload.event || github.event_name) == 'workflow_dispatch') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
