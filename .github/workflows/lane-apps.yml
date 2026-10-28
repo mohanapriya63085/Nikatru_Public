@@ -1366,6 +1366,7 @@ jobs:
           GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
           GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
           POOL_NEEDS: ${{ toJSON(needs) }}
+          NIKATRU_POOLS: ${{ vars.NIKATRU_POOLS }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
