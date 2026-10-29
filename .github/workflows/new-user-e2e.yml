@@ -5,10 +5,16 @@ env:
 
 name: New-user journey
 
+run-name: "New-user journey${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '07 4 * * *'
+    inputs:
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -628,7 +634,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: A dispatch walks no digest leg
-        if: (github.event.client_payload.event || github.event_name) != 'schedule'
+        if: ((github.event.client_payload.event || github.event_name) != 'schedule' && inputs.worker_slot == '')
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -637,7 +643,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Preflight — every secret the digest leg needs is present
-        if: (github.event.client_payload.event || github.event_name) == 'schedule'
+        if: ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '')
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -655,7 +661,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Read and grade the digest an earlier run's probe was mailed
         id: read
-        if: (github.event.client_payload.event || github.event_name) == 'schedule'
+        if: ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '')
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -684,7 +690,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The app's API base, from the composer's rule
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' }}
+        if: ${{ !cancelled() && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -693,7 +699,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name new-user-e2e.reminder-digest.7 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Seed today's digest probe (the 06:10 digest cron mails it)
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' }}
+        if: ${{ !cancelled() && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

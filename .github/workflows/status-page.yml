@@ -5,9 +5,9 @@ env:
 
 name: Status page
 
+run-name: "Status page${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
-  schedule:
-    - cron: '11,26,41,56 * * * *'
   workflow_dispatch:
     inputs:
       gate_mode:
@@ -18,6 +18,11 @@ on:
         options:
           - strict
           - newest-green
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 permissions: {}
 
@@ -308,7 +313,7 @@ jobs:
           STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
           PUBLISH: ${{ steps.build.outputs.publish }}
           VOUCHED: ${{ needs.gate.outputs.sha }}
-          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          EVENT: ${{ inputs.worker_slot != '' && 'schedule' || (github.event.client_payload.event || github.event_name) }}
         run: |
           HEAD_SHA=$(git rev-parse HEAD) node tooling/status/publish-decision.mjs --readings "$RUNNER_TEMP/readings.json" --prev "$RUNNER_TEMP/prev.json" --github-output "$GITHUB_OUTPUT"
       - name: Deploy the status page to nikatru-status

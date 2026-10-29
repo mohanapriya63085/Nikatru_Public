@@ -34,8 +34,6 @@ on:
         required: false
         default: ''
         type: string
-  schedule:
-    - cron: '0 8 * * 3'
 
 permissions:
   contents: read
@@ -213,10 +211,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --timeout-seconds 2700
+          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --timeout-seconds 2700 --gate-mode "$GATE_MODE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

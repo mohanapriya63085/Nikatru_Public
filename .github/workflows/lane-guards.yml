@@ -1713,6 +1713,7 @@ jobs:
         timeout-minutes: 3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NIKATRU_TIMER_READ_BY_OPS_WATCH: '1'
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'

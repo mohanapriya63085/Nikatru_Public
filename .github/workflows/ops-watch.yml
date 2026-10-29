@@ -5,6 +5,8 @@ env:
 
 name: Ops watch
 
+run-name: "Ops watch${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -40,26 +42,17 @@ on:
         description: 'Also post the weekly ops digest (off for the Worker and post-merge dispatches; the Monday slot posts it regardless)'
         type: boolean
         default: false
-  schedule:
-    - cron: '30 7 * * *'
-    - cron: '45 7 * * 1'
-    - cron: '45 7 * * 4'
-    - cron: '50 8 * * *'
-    - cron: '30 19 * * *'
-    - cron: '30 0 * * *'
-    - cron: '30 2 * * *'
-    - cron: '30 4 * * *'
-    - cron: '0 11 * * *'
-    - cron: '30 12 * * *'
-    - cron: '30 15 * * *'
-    - cron: '30 17 * * *'
-    - cron: '30 22 * * *'
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: ops-watch-${{ (github.event.client_payload.event || github.event_name) }}
+  group: ops-watch-${{ inputs.worker_slot && 'worker-slot' || (github.event.client_payload.event || github.event_name) }}
   cancel-in-progress: false
 
 jobs:
@@ -368,7 +361,7 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Is the daily OSV scan of main due on this run
         id: osvdue
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' }}
+        if: ${{ !cancelled() && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') }}
         timeout-minutes: 2
         env:
           GH_TOKEN: ${{ github.token }}
@@ -494,7 +487,7 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Every cron fired on its own cadence and its newest scheduled run is green
+      - name: Every Worker cron slot fired on its own cadence and its newest vouched run is green
         if: ${{ !cancelled() }}
         timeout-minutes: 5
         env:
@@ -584,31 +577,6 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Mark this period's weekly readers as run
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && (needs.status.outputs.weekly == 'true' || needs.status.outputs.twice == 'true') && needs.status.outputs.week != '' }}
-        env:
-          WEEK: ${{ needs.status.outputs.week }}
-          HALF: ${{ needs.status.outputs.half }}
-        run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          mkdir -p .cache/ops-watch-weekly
-          printf '%s %s %s\n' "$WEEK" "$HALF" "$GITHUB_RUN_ID" > .cache/ops-watch-weekly/marker
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Save this ISO week's weekly marker
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && needs.status.outputs.weekly == 'true' && needs.status.outputs.week != '' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/ops-watch-weekly
-          key: ops-watch-weekly-${{ needs.status.outputs.week }}
-      - name: Save this half week's marker
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && needs.status.outputs.twice == 'true' && needs.status.outputs.week != '' && needs.status.outputs.half != '' }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/ops-watch-weekly
-          key: ops-watch-twice-${{ needs.status.outputs.week }}-${{ needs.status.outputs.half }}
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -746,36 +714,18 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Has this ISO week's weekly run happened
-        id: weekly-hit
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && steps.period.outputs.week != '' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/ops-watch-weekly
-          key: ops-watch-weekly-${{ steps.period.outputs.week }}
-          lookup-only: true
-      - name: Has this half week's run happened
-        id: twice-hit
-        if: ${{ !cancelled() && (github.event.client_payload.event || github.event_name) == 'schedule' && steps.period.outputs.week != '' && steps.period.outputs.half != '' }}
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .cache/ops-watch-weekly
-          key: ops-watch-twice-${{ steps.period.outputs.week }}-${{ steps.period.outputs.half }}
-          lookup-only: true
       - name: Which weekly readers are due
         id: due
         if: ${{ !cancelled() }}
         env:
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
-          WEEKLY_HIT: ${{ steps.weekly-hit.outputs.cache-hit }}
-          TWICE_HIT: ${{ steps.twice-hit.outputs.cache-hit }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ops/ops-watch-weekly-slot.mjs --decide --event "$EVENT" --weekly-hit "${WEEKLY_HIT:-false}" --twice-hit "${TWICE_HIT:-false}"
+          node tooling/ops/ops-watch-weekly-slot.mjs --decide --event "$EVENT" --weekly-hit false --twice-hit false
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.status.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -2688,7 +2638,7 @@ jobs:
   alert:
     name: Open or refresh the ops-watch issue
     needs: [nikatru-pin, heartbeats, status, supabase-drift, prod-provenance, pages-deployments, runner-budget, glitchtip, config-drift, edge-shield, failure-ledger, renovate-backlog, code-scanning-age, tech-currency, self-review]
-    if: failure() && ((github.event.client_payload.event || github.event_name) == 'schedule' || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended))
+    if: failure() && (((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') || ((github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.unattended))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:

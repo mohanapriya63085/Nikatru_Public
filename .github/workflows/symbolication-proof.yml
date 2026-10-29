@@ -5,7 +5,7 @@ env:
 
 name: Symbolication proof
 
-run-name: "Symbolication proof · ${{ inputs.app }}"
+run-name: "Symbolication proof · ${{ inputs.app }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -14,11 +14,14 @@ on:
         description: 'The app whose crash probe to prove: one id of the workspace app set (tooling/ci/assert-release-lane-generic.mjs --emit-apps). The gate job refuses any other value.'
         required: true
         type: string
-  schedule:
-    - cron: '16 14 10 * *'
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
-  group: symbolication-proof-${{ (github.event.client_payload.event || github.event_name) == 'schedule' && '(schedule)' || inputs.app }}
+  group: symbolication-proof-${{ ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') && '(schedule)' || inputs.app }}
   cancel-in-progress: false
 
 permissions:
@@ -194,11 +197,19 @@ jobs:
         env:
           APP_INPUT: ${{ inputs.app }}
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if [ "$EVENT" = schedule ]; then
+          # why: ⏱ 2026-10-26 · cron-off-github-1026: the platform Worker's slot (worker_slot set) IS the schedule, so it
+          # proves the whole set. `app` is required, so the Worker sends the placeholder `weekly-rotation`, never read
+          # as an app: a worker-slot run carrying any other value is refused; a hand dispatch keeps its own check.
+          if [ -n "$WORKER_SLOT" ] && [ "$APP_INPUT" != weekly-rotation ]; then
+            echo "::error::a worker-slot run (${WORKER_SLOT}) proves every app; its app input must be the placeholder weekly-rotation, not '${APP_INPUT}'"
+            exit 1
+          fi
+          if [ "$EVENT" = schedule ] || [ -n "$WORKER_SLOT" ]; then
             apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
           else
             apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT")"
@@ -214,10 +225,11 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
+          GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha
+          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --gate-mode "$GATE_MODE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name symbolication-proof.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

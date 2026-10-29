@@ -6,7 +6,7 @@ env:
 
 name: E2E live
 
-run-name: "E2E live · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}"
+run-name: "E2E live · ${{ github.event.client_payload.sha }}${{ github.event.client_payload.pr && format(' (PR #{0})', github.event.client_payload.pr) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   repository_dispatch:
@@ -29,9 +29,11 @@ on:
         options:
           - skip
           - run
-  schedule:
-    - cron: '17 3 * * *'
-    - cron: '43 4 * * 0'
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -894,7 +896,7 @@ jobs:
   native:
     name: Native leg — ${{ matrix.target }} (${{ matrix.app }})
     needs: [nikatru-pin, prepare]
-    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.prepare.result == 'success' && (github.event.schedule == '43 4 * * 0')
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && needs.prepare.result == 'success' && (inputs.worker_slot == '43 4 * * *')
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     defaults:
@@ -1289,7 +1291,7 @@ jobs:
   reset-revokes:
     needs: [nikatru-pin]
     name: A password reset revokes the other sessions (Box C)
-    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && (github.event.schedule == '43 4 * * 0')
+    if: needs.nikatru-pin.result == 'success' && !cancelled() && !failure() && (inputs.worker_slot == '43 4 * * *')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -1423,7 +1425,7 @@ jobs:
   alert:
     name: Open or refresh the nightly-failure issue
     needs: [nikatru-pin, e2e, native, reset-revokes]
-    if: (needs.nikatru-pin.result == 'success' || (needs.nikatru-pin.result == 'failure' && (github.event.client_payload.event || github.event_name) == 'schedule')) && (failure() && (github.event.client_payload.event || github.event_name) == 'schedule')
+    if: (needs.nikatru-pin.result == 'success' || (needs.nikatru-pin.result == 'failure' && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != ''))) && (failure() && ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != ''))
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -1434,7 +1436,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           repository: ${{ env.NIKATRU_PRIVATE_REPO }}
-          ref: ${{ needs.nikatru-pin.outputs.sha || (needs.nikatru-pin.result == 'failure' && (github.event.client_payload.event || github.event_name) == 'schedule' && 'refs/heads/main') || 'nikatru-pin-did-not-succeed..' }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || (needs.nikatru-pin.result == 'failure' && 'refs/heads/main') || 'nikatru-pin-did-not-succeed..' }}
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
       - name: Name the private commit (generated)
@@ -1607,7 +1609,7 @@ jobs:
   nikatru-collect:
     name: Collect the red detail, without the report secret (generated)
     needs: [prepare, e2e]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -1760,7 +1762,7 @@ jobs:
   nikatru-report:
     name: Report to the private repository (generated)
     needs: [prepare, e2e, nikatru-collect]
-    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule')
+    if: always() && (github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     defaults:
       run:

@@ -5,11 +5,16 @@ env:
 
 name: Autopilot watch
 
+run-name: "Autopilot watch${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
-  schedule:
-    - cron: '7,22,37,52 * * * *'
   workflow_dispatch:
     inputs:
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
       nikatru_relay_run:
         description: The shell run that started this one (generated; empty is a person dispatching it).
         required: false

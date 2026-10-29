@@ -5,7 +5,7 @@ env:
 
 name: Review crawl
 
-run-name: "Review crawl${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "Review crawl${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -27,13 +27,16 @@ on:
         description: 'A private_ref branch run only: the number of the private pull request whose head that branch is (its CI run is the gate). Empty for main.'
         type: string
         default: ''
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
       private_ref:
         description: The PRIVATE ref this run builds, refs/heads/<branch> (generated; empty is the private main).
         required: false
         default: ''
         type: string
-  schedule:
-    - cron: '40 20 * * *'
 
 permissions:
   contents: read
@@ -222,10 +225,10 @@ jobs:
       - id: plan
         name: Plan the crawl cells
         env:
-          EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          EVENT: ${{ inputs.worker_slot != '' && 'schedule' || (github.event.client_payload.event || github.event_name) }}
           TARGET: ${{ inputs.target }}
           PHASE: ${{ inputs.phase }}
-          MATRIX: ${{ inputs.matrix }}
+          MATRIX: ${{ inputs.worker_slot == '' && inputs.matrix || '' }}
           STATUS_PAGE_LIVE: ${{ vars.STATUS_PAGE_LIVE }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -322,10 +325,11 @@ jobs:
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
           PRIVATE_PR: ${{ inputs.private_pr }}
           REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
+          GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --pr "$PRIVATE_PR" --ref "$REF"
+          node tooling/ci/assert-gate-passed.mjs ${{ env.NIKATRU_SHA }} --schedule-lookback 20 --event "$EVENT_NAME" --output sha --pr "$PRIVATE_PR" --ref "$REF" --gate-mode "$GATE_MODE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name review-crawl.gate.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"

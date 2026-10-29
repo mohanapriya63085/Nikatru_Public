@@ -5,13 +5,18 @@ env:
 
 name: Store billing
 
+run-name: "Store billing${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
-  schedule:
-    - cron: '41 1 * * *'
   workflow_dispatch:
     inputs:
       only_testing:
         description: ONE StoreBillingTests method to run alone, e.g. testPurchaseInTheAppWhereASceneIsActive (diagnosis only; empty runs the whole suite).
+        required: false
+        default: ''
+        type: string
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
         required: false
         default: ''
         type: string

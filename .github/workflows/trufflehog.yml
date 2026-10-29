@@ -5,10 +5,16 @@ env:
 
 name: TruffleHog
 
+run-name: "TruffleHog${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+
 on:
-  schedule:
-    - cron: '41 13 * * *'
   workflow_dispatch:
+    inputs:
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read

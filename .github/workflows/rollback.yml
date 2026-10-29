@@ -5,7 +5,7 @@ env:
 
 name: Rollback
 
-run-name: "Rollback · ${{ inputs.unit }} · ${{ inputs.deployment }} · ${{ inputs.dry_run }}"
+run-name: "Rollback · ${{ inputs.unit }} · ${{ inputs.deployment }} · ${{ inputs.dry_run }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -23,11 +23,14 @@ on:
         required: true
         type: boolean
         default: true
-  schedule:
-    - cron: '46 10 3 * *'
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
 
 concurrency:
-  group: ${{ (github.event.client_payload.event || github.event_name) == 'schedule' && 'rollback-rehearsal' || 'rollback' }}
+  group: ${{ ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') && 'rollback-rehearsal' || 'rollback' }}
   cancel-in-progress: false
 
 permissions:
@@ -134,7 +137,7 @@ jobs:
   group:
     needs: [nikatru-pin]
     name: Name the unit's deploy group
-    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch'
+    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.worker_slot == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -221,7 +224,7 @@ jobs:
 
   rollback:
     name: Re-promote a recorded Pages deployment or Worker version
-    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch'
+    if: (github.event.client_payload.event || github.event_name) == 'workflow_dispatch' && inputs.worker_slot == ''
     needs: [nikatru-pin, group]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -326,7 +329,7 @@ jobs:
   rehearse:
     needs: [nikatru-pin]
     name: Rehearse the break-glass rollback plan (dry run, every production unit)
-    if: (github.event.client_payload.event || github.event_name) == 'schedule'
+    if: ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -387,6 +390,23 @@ jobs:
           rm -rf ../.nikatru-shell
           mv .nikatru-shell/.github/nikatru ../.nikatru-shell
           rm -rf .nikatru-shell
+      - name: A worker-slot run is the dry-run rehearsal only
+        env:
+          WORKER_SLOT: ${{ inputs.worker_slot }}
+          UNIT: ${{ inputs.unit }}
+          DEPLOYMENT: ${{ inputs.deployment }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          set -euo pipefail
+          if [ -n "$WORKER_SLOT" ] && { [ "$DRY_RUN" != true ] || [ "$UNIT" != rehearsal ] || [ "$DEPLOYMENT" != rehearsal ]; }; then
+            echo "::error::a worker-slot run (${WORKER_SLOT}) is the monthly dry-run rehearsal only: unit and deployment must be the placeholder 'rehearsal' and dry_run true, not unit=${UNIT} deployment=${DEPLOYMENT} dry_run=${DRY_RUN}"
+            exit 1
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.2 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -410,7 +430,7 @@ jobs:
           node tooling/ops/rollback.mjs --break-glass --dry-run --audit "$RUNNER_TEMP/rollback-audit.jsonl" --by "rollback.yml schedule"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Rehearse the plan itself, one success back for every unit, changing nothing
         if: ${{ !cancelled() }}
         env:
@@ -421,7 +441,7 @@ jobs:
           node tooling/ops/rollback.mjs --break-glass --dry-run --rehearse-previous --audit "$RUNNER_TEMP/rollback-audit-previous.jsonl" --by "rollback.yml schedule (previous)"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name rollback.rehearse.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true

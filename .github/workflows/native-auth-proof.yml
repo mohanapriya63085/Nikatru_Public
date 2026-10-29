@@ -5,11 +5,9 @@ env:
 
 name: Native auth proof
 
-run-name: "Native auth proof · ${{ inputs.app }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "Native auth proof · ${{ inputs.app }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
-  schedule:
-    - cron: '16 9 * * 0'
   workflow_dispatch:
     inputs:
       app:
@@ -32,6 +30,11 @@ on:
         options:
           - token
           - form
+      worker_slot:
+        description: 'Set by the platform Worker cron only: the slot of record it fired for. Empty on a hand dispatch.'
+        required: false
+        default: ''
+        type: string
       private_pr:
         description: "A private_ref branch run only: the number of the private pull request whose head that branch is (its CI run is the gate). Empty for main."
         required: false
@@ -44,7 +47,7 @@ on:
         type: string
 
 concurrency:
-  group: native-auth-proof-${{ (github.event.client_payload.event || github.event_name) == 'schedule' && '(schedule)' || inputs.app }}
+  group: native-auth-proof-${{ ((github.event.client_payload.event || github.event_name) == 'schedule' || inputs.worker_slot != '') && '(schedule)' || inputs.app }}
   cancel-in-progress: false
 
 permissions:
@@ -268,10 +271,11 @@ jobs:
           EVENT_NAME: ${{ (github.event.client_payload.event || github.event_name) }}
           PRIVATE_PR: ${{ inputs.private_pr }}
           REF: ${{ (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') }}
+          GATE_MODE: ${{ inputs.worker_slot != '' && 'newest-green' || '' }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --schedule-lookback 20 --event "$EVENT_NAME" --output sha --pr "$PRIVATE_PR" --ref "$REF"
+          node tooling/ci/assert-gate-passed.mjs "$(git rev-parse HEAD)" --schedule-lookback 20 --event "$EVENT_NAME" --output sha --pr "$PRIVATE_PR" --ref "$REF" --gate-mode "$GATE_MODE"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name native-auth-proof.gate.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -280,11 +284,19 @@ jobs:
         env:
           APP_INPUT: ${{ inputs.app }}
           EVENT: ${{ (github.event.client_payload.event || github.event_name) }}
+          WORKER_SLOT: ${{ inputs.worker_slot }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
-          if [ "$EVENT" = schedule ]; then
+          # why: ⏱ 2026-10-26 · cron-off-github-1026: the platform Worker's slot (worker_slot set) IS the schedule, so it
+          # proves the whole set. `app` is required, so the Worker sends the placeholder `weekly-rotation`, never read
+          # as an app: a worker-slot run carrying any other value is refused; a hand dispatch keeps its own check.
+          if [ -n "$WORKER_SLOT" ] && [ "$APP_INPUT" != weekly-rotation ]; then
+            echo "::error::a worker-slot run (${WORKER_SLOT}) proves every app; its app input must be the placeholder weekly-rotation, not '${APP_INPUT}'"
+            exit 1
+          fi
+          if [ "$EVENT" = schedule ] || [ -n "$WORKER_SLOT" ]; then
             apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps)"
           else
             apps="$(node tooling/ci/assert-release-lane-generic.mjs --emit-apps --app "$APP_INPUT")"
