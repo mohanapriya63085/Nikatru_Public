@@ -230,10 +230,18 @@ jobs:
     name: First pass of one peer, without and with the machinery
     needs: [nikatru-pin, plan]
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
+    continue-on-error: true
     permissions:
       contents: read
       id-token: write
+    outputs:
+      verdict_0: ${{ steps.hand.outputs.verdict_0 }}
+      verdict_1: ${{ steps.hand.outputs.verdict_1 }}
+      verdict_2: ${{ steps.hand.outputs.verdict_2 }}
+      verdict_3: ${{ steps.hand.outputs.verdict_3 }}
+      verdict_4: ${{ steps.hand.outputs.verdict_4 }}
+      verdict_5: ${{ steps.hand.outputs.verdict_5 }}
     strategy:
       fail-fast: false
       matrix:
@@ -247,6 +255,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: 3
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -302,6 +311,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: 3
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -312,6 +322,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: 3
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -326,7 +337,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        timeout-minutes: 2
       - name: Join both commits' objects to the main checkout, and keep main's judge
+        timeout-minutes: 2
         env:
           MACHINERY: ${{ inputs.machinery_sha }}
           PEER: ${{ matrix.peer }}
@@ -349,6 +362,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Does the peer bring Dart
+        timeout-minutes: 2
         id: dart
         env:
           PEER: ${{ matrix.peer }}
@@ -375,10 +389,12 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-flutter
+        timeout-minutes: 6
         if: steps.dart.outputs.dart == 'true'
         with:
           cache: 'false'
       - name: Activate melos
+        timeout-minutes: 2
         if: steps.dart.outputs.dart == 'true'
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -388,6 +404,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: BASELINE — the peer merged with main, first pass as ci.yml runs it
+        timeout-minutes: 16
         env:
           PEER: ${{ matrix.peer }}
         run: |
@@ -398,6 +415,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: CANDIDATE — the peer merged with main and the machinery head
+        timeout-minutes: 16
         env:
           MACHINERY: ${{ inputs.machinery_sha }}
           PEER: ${{ matrix.peer }}
@@ -409,6 +427,8 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.10 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The verdict (only CANARY GREEN passes this job)
+        timeout-minutes: 1
+        id: verdict
         env:
           PEER: ${{ matrix.peer }}
         run: |
@@ -419,6 +439,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.11 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Put the tree back at main
+        timeout-minutes: 1
         if: always()
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -427,6 +448,30 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.12 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Hand this peer's class to the run's verdict job
+        timeout-minutes: 1
+        id: hand
+        if: always()
+        env:
+          CANARY: ${{ steps.verdict.outputs.canary }}
+          OUTCOME: ${{ steps.verdict.outcome }}
+          INDEX: ${{ strategy.job-index }}
+          PEER: ${{ matrix.peer }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          v="${CANARY:-none} $PEER ${OUTCOME:-none}"
+          if [ -z "$CANARY" ] && grep -q '^  "exit": 0,$' "$RUNNER_TEMP/baseline.json" 2>/dev/null && [ ! -s "$RUNNER_TEMP/candidate.json" ]; then v="knock-on $PEER candidate-unfinished"; fi
+          if [ "$INDEX" = 0 ]; then echo "verdict_0=$v" >> "$GITHUB_OUTPUT"
+          elif [ "$INDEX" = 1 ]; then echo "verdict_1=$v" >> "$GITHUB_OUTPUT"
+          elif [ "$INDEX" = 2 ]; then echo "verdict_2=$v" >> "$GITHUB_OUTPUT"
+          elif [ "$INDEX" = 3 ]; then echo "verdict_3=$v" >> "$GITHUB_OUTPUT"
+          elif [ "$INDEX" = 4 ]; then echo "verdict_4=$v" >> "$GITHUB_OUTPUT"
+          elif [ "$INDEX" = 5 ]; then echo "verdict_5=$v" >> "$GITHUB_OUTPUT"
+          fi
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.13 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -444,10 +489,13 @@ jobs:
     name: The machinery head on arm64, every pinned tool and both scanners
     needs: [nikatru-pin, plan]
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 20
+    timeout-minutes: 30
+    continue-on-error: true
     permissions:
       contents: read
       id-token: write
+    outputs:
+      canary: ${{ steps.verdict.outputs.canary }}
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -457,6 +505,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: 3
       - name: Name the private commit (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -512,6 +561,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
           persist-credentials: false
+        timeout-minutes: 3
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -526,7 +576,9 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
+        timeout-minutes: 2
       - name: Join the machinery head's objects to the main checkout, and keep main's judge
+        timeout-minutes: 2
         env:
           MACHINERY: ${{ inputs.machinery_sha }}
         run: |
@@ -544,6 +596,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.arch.4 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The first pass's tools install and secret-scan and workflow-scan run, at main and at main + the machinery head
+        timeout-minutes: 16
         env:
           MACHINERY: ${{ inputs.machinery_sha }}
         run: |
@@ -554,6 +607,8 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.arch.5 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: The verdict (only CANARY GREEN passes this job)
+        timeout-minutes: 1
+        id: verdict
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -562,6 +617,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.arch.6 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Put the tree back at main
+        timeout-minutes: 1
         if: always()
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -578,6 +634,107 @@ jobs:
         env:
           NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
           NIKATRU_ARTIFACT_NAME: report-detail-machinery-canary.arch.${{ strategy.job-index }}
+          NIKATRU_IF_NO_FILES: ignore
+          BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
+          NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
+        run: node tooling/ops/bridge-artifact.mjs upload
+
+  verdict:
+    name: The canary's verdict (red only on a KNOCK-ON or no CLEAN peer)
+    needs: [nikatru-pin, plan, peer, arch]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the private tree (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: ${{ needs.nikatru-pin.outputs.sha || 'nikatru-pin-did-not-succeed..' }}
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Name the private commit (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_P_EVENT: ${{ github.event.client_payload.event || github.event_name }}
+          NIKATRU_P_REF: ${{ github.event.client_payload.ref || 'refs/heads/main' }}
+          NIKATRU_P_BASE_SHA: ${{ github.event.client_payload.base_sha }}
+          NIKATRU_P_BASE_REF: ${{ github.event.client_payload.base_ref }}
+          NIKATRU_P_PR: ${{ github.event.client_payload.pr }}
+          NIKATRU_P_PR_CREATED_AT: ${{ github.event.client_payload.pr_created_at }}
+          NIKATRU_P_DRAFT: ${{ github.event.client_payload.draft }}
+          NIKATRU_P_SHA: ${{ github.event.client_payload.sha }}
+        run: |
+          if [ "$NIKATRU_P_EVENT" = pull_request ]; then
+            set -- $(git cat-file -p HEAD | sed -n '1,/^$/s/^parent //p')
+            if [ "${2:-}" != "$NIKATRU_P_SHA" ]; then
+              echo "::error::the checked-out merge of PR #$NIKATRU_P_PR is not the merge of the dispatched head $NIKATRU_P_SHA (its second parent is ${2:-none}); the nikatru-pin job pins it — re-run the whole workflow, not this job"
+              exit 1
+            fi
+          fi
+          {
+            echo "NIKATRU_SHA=$(git rev-parse HEAD)"
+            echo "NIKATRU_HEAD_SHA=${NIKATRU_P_SHA:-$(git rev-parse HEAD)}"
+            echo "NIKATRU_EVENT_NAME=$NIKATRU_P_EVENT"
+            echo "NIKATRU_REF=$NIKATRU_P_REF"
+            echo "NIKATRU_REF_NAME=${NIKATRU_P_REF#refs/*/}"
+            echo "NIKATRU_BASE_SHA=$NIKATRU_P_BASE_SHA"
+            echo "NIKATRU_BASE_REF=$NIKATRU_P_BASE_REF"
+            echo "NIKATRU_PR=$NIKATRU_P_PR"
+            echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
+            echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
+          } >> "$GITHUB_ENV"
+      - name: Check out this shell repository's own step wrapper and reporter (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          path: .nikatru-shell
+          sparse-checkout: .github/nikatru
+          persist-credentials: false
+      - name: Stage the shell's own copies outside the private checkout (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          rm -rf ../.nikatru-shell
+          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
+          rm -rf .nikatru-shell
+      - name: Check out private main's composite actions (generated)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ env.NIKATRU_PRIVATE_REPO }}
+          ref: refs/heads/main
+          path: .nikatru-trusted
+          sparse-checkout: .github/actions
+          ssh-key: ${{ secrets.PRIVATE_DEPLOY_KEY }}
+          persist-credentials: false
+      - name: Keep private main's composite actions out of the branch's tree (generated)
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
+      - uses: ./.nikatru-trusted/.github/actions/setup-node
+      - name: CLEAN, KNOCK-ON and no-evidence over every peer and the arm64 job
+        env:
+          PEERS: ${{ needs.plan.outputs.peers }}
+          VERDICTS: ${{ toJSON(needs.peer.outputs) }}
+          ARCH: ${{ needs.arch.outputs.canary }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ci/machinery-canary.mjs --verdict --peers "$PEERS" --outputs "$VERDICTS" --arch-canary "$ARCH"
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.verdict.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: Store this job's red detail in the bridge's private home (generated)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        env:
+          NIKATRU_PATHS: ${{ runner.temp }}/report-detail.md
+          NIKATRU_ARTIFACT_NAME: report-detail-machinery-canary.verdict.${{ strategy.job-index }}
           NIKATRU_IF_NO_FILES: ignore
           BRIDGE_ARTIFACT_SECRET: ${{ secrets.BRIDGE_ARTIFACT_SECRET }}
           NIKATRU_BRIDGE_ARTIFACT_URL: https://gh-bridge.nikatru.workers.dev/artifact
@@ -730,7 +887,7 @@ jobs:
 
   nikatru-ran:
     name: Fail this run if it ran nothing (generated)
-    needs: [plan, peer, arch, producers]
+    needs: [plan, peer, arch, verdict, producers]
     if: "!cancelled()"
     runs-on: ubuntu-24.04
     defaults:
@@ -750,7 +907,7 @@ jobs:
       - name: Fail when every job of this run was skipped (generated)
         shell: bash
         env:
-          NIKATRU_RESULTS: plan=${{ needs.plan.result }} peer=${{ needs.peer.result }} arch=${{ needs.arch.result }} producers=${{ needs.producers.result }}
+          NIKATRU_RESULTS: plan=${{ needs.plan.result }} peer=${{ needs.peer.result }} arch=${{ needs.arch.result }} verdict=${{ needs.verdict.result }} producers=${{ needs.producers.result }}
         run: |
           for r in $NIKATRU_RESULTS; do
             if [ "${r#*=}" != skipped ]; then echo "ran: $NIKATRU_RESULTS"; exit 0; fi

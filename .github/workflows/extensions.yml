@@ -1588,8 +1588,12 @@ jobs:
         run: node tooling/ci/tag-owner.mjs --lane .github/workflows/extensions.yml --tag "$TAG_ID-v$TAG_VERSION"
       - name: Tag must be reachable from main
         run: |
-          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          git merge-base --is-ancestor "$NIKATRU_SHA" origin/main
+          set -euo pipefail
+          if ! git rev-parse --verify --quiet refs/remotes/origin/main > /dev/null; then
+            echo "::error::the checkout holds no refs/remotes/origin/main, so whether this commit is on main cannot be read. The release checkout must keep fetch-depth: 0, which fetches every branch; it is never re-fetched here, because the checkout persists no credential."
+            exit 1
+          fi
+          git merge-base --is-ancestor "$NIKATRU_SHA" refs/remotes/origin/main
       - name: ci graded THIS commit, so its gate results can be trusted
         shell: bash
         env:
@@ -1695,27 +1699,61 @@ jobs:
           # tooling/ci/test/release-grades-legs.test.mjs holds each query target, one
           # call level deep, to the job names grade() reads. The SHAs asked about are
           # this commit and the head of every merged PR GitHub associates with it.
-          # why: a commit's pull requests live in the CODE repository; in the public shell GITHUB_REPOSITORY names
-          # the shell (NIKATRU_PRIVATE_REPO, set by the generated header, names the code).
-          if ! prs=$(gh api "repos/${NIKATRU_PRIVATE_REPO:-$GITHUB_REPOSITORY}/commits/$NIKATRU_SHA/pulls" \
-                --jq '.[] | select(.merged_at != null and .base.ref == "main") | .head.sha'); then
-            echo "::error::could not ask GitHub which merged PR carried $NIKATRU_SHA. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
-            exit 1
-          fi
-          shas=$(printf '%s\n%s\n' "$NIKATRU_SHA" "$prs" | awk 'NF && !seen[$0]++')
+          # why: in the public shell (NIKATRU_PRIVATE_REPO set by the generated header) a run's head_sha is the
+          # SHELL's commit and github.token cannot read the code repository's PRs, so there the one run asked
+          # for is ci.yml's, by the title the bridge dispatches it under -- "CI · <full sha>", gate-verdict.mjs
+          # gateRunTitle -- and the merged PR's head is not read (no bridge door serves it: fewer candidates,
+          # never a weaker grade).
           runs=''
-          for sha in $shas; do
-            for q in "actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
-                     "actions/workflows/extensions.yml/runs?head_sha=$sha&per_page=100"; do
-              if ! r=$(gh api --paginate "repos/$GITHUB_REPOSITORY/$q" \
-                    --jq '.workflow_runs[] | select(.conclusion == "success") | .id'); then
-                echo "::error::could not ask GitHub which ${q%%/runs*} runs exist for $sha. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
-                exit 1
-              fi
-              echo "  ${q%%/runs*} at $sha: successful run(s) [$(printf '%s' "$r" | tr '\n' ' ')]"
-              runs="$runs $r"
+          if [ -n "${NIKATRU_PRIVATE_REPO:-}" ]; then
+            # A filtered list of workflow runs returns at most 1000 results, newest first, so the window is
+            # bounded on BOTH sides of the commit's date, and a window that reaches the cap is refused by name:
+            # past it, the run titled for this SHA could exist and still not be listed.
+            committed=$(git log -1 --format=%cI "$NIKATRU_SHA")
+            since=$(date -u -d "$committed - 1 day" +%F)
+            until=$(date -u -d "$committed + 3 days" +%F)
+            echo "  (the shell: runs found by title \"CI · $NIKATRU_SHA\" created $since..$until; a merged PR's head is not read here)"
+            q="actions/workflows/ci.yml/runs?event=repository_dispatch&created=$since..$until&per_page=100"
+            if ! total=$(gh api "repos/$GITHUB_REPOSITORY/${q%&per_page=*}&per_page=1" --jq '.total_count'); then
+              echo "::error::could not ask GitHub how many ci.yml runs were dispatched in $since..$until. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
+              exit 1
+            fi
+            case "$total" in
+              ''|*[!0-9]*)
+                echo "::error::GitHub answered \"$total\" for how many ci.yml runs were dispatched in $since..$until, which is not a count. This step fails closed rather than assuming."
+                exit 1 ;;
+            esac
+            if [ "$total" -ge 1000 ]; then
+              echo "::error::$total ci.yml runs were dispatched in $since..$until, and GitHub lists at most 1000 for a filtered query, so the run titled \"CI · $NIKATRU_SHA\" may be past the cap and its absence would prove nothing. Narrow the window in this step; this is not a missing gate run."
+              exit 1
+            fi
+            if ! r=$(gh api --paginate "repos/$GITHUB_REPOSITORY/$q" \
+                  --jq ".workflow_runs[] | select(.display_title == \"CI · $NIKATRU_SHA\" and .conclusion == \"success\") | .id"); then
+              echo "::error::could not ask GitHub which ci.yml runs are titled for $NIKATRU_SHA. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
+              exit 1
+            fi
+            echo "  ci.yml titled for $NIKATRU_SHA: successful run(s) [$(printf '%s' "$r" | tr '\n' ' ')]"
+            runs="$r"
+          else
+            if ! prs=$(gh api "repos/${NIKATRU_PRIVATE_REPO:-$GITHUB_REPOSITORY}/commits/$NIKATRU_SHA/pulls" \
+                  --jq '.[] | select(.merged_at != null and .base.ref == "main") | .head.sha'); then
+              echo "::error::could not ask GitHub which merged PR carried $NIKATRU_SHA. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
+              exit 1
+            fi
+            shas=$(printf '%s\n%s\n' "$NIKATRU_SHA" "$prs" | awk 'NF && !seen[$0]++')
+            for sha in $shas; do
+              for q in "actions/workflows/ci.yml/runs?head_sha=$sha&per_page=100" \
+                       "actions/workflows/extensions.yml/runs?head_sha=$sha&per_page=100"; do
+                if ! r=$(gh api --paginate "repos/$GITHUB_REPOSITORY/$q" \
+                      --jq '.workflow_runs[] | select(.conclusion == "success") | .id'); then
+                  echo "::error::could not ask GitHub which ${q%%/runs*} runs exist for $sha. This step is the only thing between a tag and a gate result nobody produced, so it fails closed rather than assuming."
+                  exit 1
+                fi
+                echo "  ${q%%/runs*} at $sha: successful run(s) [$(printf '%s' "$r" | tr '\n' ' ')]"
+                runs="$runs $r"
+              done
             done
-          done
+          fi
           if [ -z "${runs// /}" ]; then
             echo "::error::neither ci.yml nor extensions.yml has a successful run at $NIKATRU_SHA or at the head of the PR that merged it, so no per-tool leg was graded on these bytes. Merge the change through a PR, let ci.yml finish green on it, then tag."
             exit 1
@@ -1751,21 +1789,28 @@ jobs:
           echo "::error::$why"
           exit 1
       - name: Gates (manifest == CHANGELOG == tag, policy, core sync, lint, store metadata, catalogue)
+        env:
+          TOOL: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
         run: |
-          node scripts/check-version.mjs ${{ steps.tag.outputs.id }} --expect ${{ steps.tag.outputs.version }}
-          node scripts/policy-check.mjs   ${{ steps.tag.outputs.id }} --release
-          node scripts/check-core-sync.mjs ${{ steps.tag.outputs.id }}
-          node scripts/lint.mjs ${{ steps.tag.outputs.id }}
-          node scripts/check-store-metadata.mjs ${{ steps.tag.outputs.id }}
+          node scripts/check-version.mjs "$TOOL" --expect "$VERSION"
+          node scripts/policy-check.mjs   "$TOOL" --release
+          node scripts/check-core-sync.mjs "$TOOL"
+          node scripts/lint.mjs "$TOOL"
+          node scripts/check-store-metadata.mjs "$TOOL"
           node scripts/check-catalog.mjs
       - name: Secret scan (full tree)
         run: node scripts/secret-scan.mjs .
       - name: Sims
-        run: node scripts/run-tests.mjs ${{ steps.tag.outputs.id }}
+        env:
+          TOOL: ${{ steps.tag.outputs.id }}
+        run: node scripts/run-tests.mjs "$TOOL"
       - name: Build all store packages
+        env:
+          TOOL: ${{ steps.tag.outputs.id }}
         run: |
-          node scripts/pack.mjs ${{ steps.tag.outputs.id }} --target chromium --out dist --release
-          node scripts/pack.mjs ${{ steps.tag.outputs.id }} --target firefox  --out dist --release
+          node scripts/pack.mjs "$TOOL" --target chromium --out dist --release
+          node scripts/pack.mjs "$TOOL" --target firefox  --out dist --release
       - name: The unpacked tree leaves the release directory
         shell: bash
         run: |
@@ -1792,10 +1837,12 @@ jobs:
           fi
       - name: The built packages are uploadable
         shell: bash
+        env:
+          TOOL: ${{ steps.tag.outputs.id }}
         run: |
           set -euo pipefail
           code=0
-          out=$(node scripts/check-store-packages.mjs ${{ steps.tag.outputs.id }} --dir dist 2>&1) || code=$?
+          out=$(node scripts/check-store-packages.mjs "$TOOL" --dir dist 2>&1) || code=$?
           printf '%s\n' "$out"
           if [ "$code" -ne 0 ]; then
             echo "::error::check-store-packages.mjs exited $code on dist. These are the exact archives the release step below uploads to a public repository, and an upload cannot be taken back."
@@ -1819,7 +1866,9 @@ jobs:
           TOOL_ID: ${{ steps.tag.outputs.id }}
         run: node scripts/discover.mjs --run-gates --tool "$TOOL_ID" --stage release --zip-dir dist
       - name: The AMO listing payload the first submit would carry (dry run)
-        run: node scripts/amo-metadata.mjs --tool "${{ steps.tag.outputs.id }}" --print
+        env:
+          TOOL: ${{ steps.tag.outputs.id }}
+        run: node scripts/amo-metadata.mjs --tool "$TOOL" --print
       - name: Reference integrity + leak check on every artifact
         run: |
           set -euo pipefail
@@ -1867,9 +1916,11 @@ jobs:
         env:
           GH_REPO: ${{ github.repository }}
           TAG: ${{ env.NIKATRU_REF_NAME }}
+          TOOL: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
         run: |
           node scripts/changelog-section.mjs \
-            ${{ steps.tag.outputs.id }} ${{ steps.tag.outputs.version }} > notes.md
+            "$TOOL" "$VERSION" > notes.md
           {
             echo ''
             echo '### Install'
@@ -1877,7 +1928,7 @@ jobs:
             echo '- Firefox (AMO): upload `*-firefox.zip`'
             echo ''
             echo 'Artifacts are byte-reproducible: rebuild from this tag with'
-            echo '`node scripts/pack.mjs ${{ steps.tag.outputs.id }} --target chromium --release` and compare SHA256SUMS.txt.'
+            echo "\`node scripts/pack.mjs ${TOOL} --target chromium --release\` and compare SHA256SUMS.txt."
             echo ''
             echo "Check that this repository's release workflow built a download, from this tag (docs/release/verify-a-download.md):"
             echo ''
@@ -1902,10 +1953,12 @@ jobs:
         working-directory: .
         env:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TOOL: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
         run: >
           node tooling/ci/release-manifest.mjs --write extensions/dist
-          --app "${{ steps.tag.outputs.id }}"
-          --tag "${{ steps.tag.outputs.id }}-v${{ steps.tag.outputs.version }}"
+          --app "$TOOL"
+          --tag "${TOOL}-v${VERSION}"
           --sha "$NIKATRU_SHA" --run-url "$RUN_URL"
       - name: And the integrity record is re-checked, both ways
         working-directory: .
@@ -1997,6 +2050,8 @@ jobs:
         working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
+          TOOL: ${{ steps.tag.outputs.id }}
+          VERSION: ${{ steps.tag.outputs.version }}
         run: |
           # 🔴 THE LIST IS EXPLICIT, SO A NEW ASSET HAS TO BE ADDED HERE TOO.
           # build-platforms.yml enumerates with `--emit-assets` and picks up a new
@@ -2008,7 +2063,7 @@ jobs:
           gh release create "$NIKATRU_REF_NAME" \
             extensions/dist/*.zip extensions/dist/SHA256SUMS.txt extensions/dist/SHA256SUMS \
             extensions/dist/release.json \
-            --title "${{ steps.tag.outputs.id }} v${{ steps.tag.outputs.version }}" \
+            --title "${TOOL} v${VERSION}" \
             --notes-file extensions/notes.md
       - name: The release must carry the assets this job just built
         if: (github.event.client_payload.event || github.event_name) == 'push' && inputs.dry_run != true
@@ -2522,6 +2577,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v'))) && (((github.event.client_payload.event || github.event_name) == 'schedule' || (inputs.worker_slot != '' && !startsWith((github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/'))))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    environment: store-keepalive
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -2562,24 +2618,6 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Check out this shell repository's own step wrapper and reporter (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          path: .nikatru-shell
-          sparse-checkout: .github/nikatru
-          persist-credentials: false
-      - name: Stage the shell's own copies outside the private checkout (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-        run: |
-          rm -rf ../.nikatru-shell
-          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
-          rm -rf .nikatru-shell
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -2598,8 +2636,6 @@ jobs:
         env:
           CWS_SERVICE_ACCOUNT_JSON: ${{ secrets.CWS_SERVICE_ACCOUNT_JSON }}
         run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           if [ -z "$CWS_SERVICE_ACCOUNT_JSON" ]; then
             echo "the CWS_SERVICE_ACCOUNT_JSON repository secret is empty; the register decides what that means."
@@ -2608,29 +2644,6 @@ jobs:
             echo "::error::the Chrome Web Store credential the release lane depends on could not be exercised. The service-account key in CWS_SERVICE_ACCOUNT_JSON no longer mints a token -- disabled, deleted or rotated. A dead key is invisible until a tag push tries to use it."
             exit 1
           fi
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.cws-token-keepalive.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Hand this job's red detail to the report job, sealed (generated)
-        id: nikatru-handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-extensions.cws-token-keepalive.${{ strategy.job-index }}
-        run: |
-          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
-            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
-          fi
-      - name: Save the hand-off (generated)
-        if: always() && steps.nikatru-handoff.outputs.has == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-extensions.cws-token-keepalive.${{ strategy.job-index }}
-          enableCrossOsArchive: true
 
   store-key-keepalive:
     needs: [nikatru-pin]
@@ -2638,6 +2651,7 @@ jobs:
     if: (github.event_name != 'repository_dispatch' || (github.event.client_payload.event == 'push' && startsWith(github.event.client_payload.ref, 'refs/tags/fullshot-v'))) && (((github.event.client_payload.event || github.event_name) == 'schedule' || (inputs.worker_slot != '' && !startsWith((github.event.client_payload.ref || 'refs/heads/main'), 'refs/tags/'))))
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    environment: store-keepalive
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -2678,24 +2692,6 @@ jobs:
             echo "NIKATRU_PR_CREATED_AT=$NIKATRU_P_PR_CREATED_AT"
             echo "NIKATRU_DRAFT=$NIKATRU_P_DRAFT"
           } >> "$GITHUB_ENV"
-      - name: Check out this shell repository's own step wrapper and reporter (generated)
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          path: .nikatru-shell
-          sparse-checkout: .github/nikatru
-          persist-credentials: false
-      - name: Stage the shell's own copies outside the private checkout (generated)
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-        run: |
-          rm -rf ../.nikatru-shell
-          mv .nikatru-shell/.github/nikatru ../.nikatru-shell
-          rm -rf .nikatru-shell
-          py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-          "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" derive
       - name: Check out private main's composite actions (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -2717,36 +2713,11 @@ jobs:
           EDGE_API_KEY: ${{ secrets.EDGE_API_KEY }}
           EDGE_CLIENT_ID: ${{ secrets.EDGE_CLIENT_ID }}
         run: |
-          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
-          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           set -euo pipefail
           if ! node scripts/store-key-keepalive.mjs; then
             echo "::error::an AMO or Edge API key the release lane depends on could not be exercised: it is absent on an armed row, was rejected, or the store could not be read. A dead key is invisible until a tag push tries to use it."
             exit 1
           fi
-          NIKATRU_QUIET_EOF
-          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name extensions.store-key-keepalive.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
-      - name: Hand this job's red detail to the report job, sealed (generated)
-        id: nikatru-handoff
-        if: always()
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        env:
-          NIKATRU_DETAIL_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/detail.key
-          NIKATRU_HANDOFF: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-extensions.store-key-keepalive.${{ strategy.job-index }}
-        run: |
-          if [ -s "$RUNNER_TEMP/report-detail.md" ]; then
-            py=python3; python3 -c '' >/dev/null 2>&1 || py=python
-            "$py" -I "$GITHUB_WORKSPACE/../.nikatru-shell/report.py" handoff
-          fi
-      - name: Save the hand-off (generated)
-        if: always() && steps.nikatru-handoff.outputs.has == 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
-        with:
-          path: .nikatru-detail
-          key: nikatru-detail-${{ github.run_id }}-${{ github.run_attempt }}-extensions.store-key-keepalive.${{ strategy.job-index }}
-          enableCrossOsArchive: true
 
   scheduled-proof-fresh:
     needs: [nikatru-pin]
