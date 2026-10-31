@@ -5,7 +5,7 @@ env:
 
 name: Kill switch
 
-run-name: "Kill switch · ${{ inputs.switch }} · ${{ inputs.environment }} · ${{ inputs.execute }}"
+run-name: "Kill switch · ${{ inputs.switch }} · ${{ inputs.environment }} · ${{ inputs.execute }}${{ inputs.rail && format(' · rail {0}', inputs.rail) || '' }}${{ inputs.app && format(' · app {0}', inputs.app) || '' }}"
 
 on:
   workflow_dispatch:

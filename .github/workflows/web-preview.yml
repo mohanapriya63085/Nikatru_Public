@@ -893,7 +893,7 @@ jobs:
     defaults:
       run:
         working-directory: ${{ github.workspace }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -912,7 +912,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/web-preview.json
       - name: Restore hand-off 0 (generated)
+        id: nikatru-slot-0
         if: steps.plan.outputs.key_0 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_0 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 0 again (generated)
+        if: steps.plan.outputs.key_0 != '' && steps.nikatru-slot-0.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 0 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_0 != '' && steps.nikatru-slot-0.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -927,7 +942,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_0 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 1 (generated)
+        id: nikatru-slot-1
         if: steps.plan.outputs.key_1 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_1 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 1 again (generated)
+        if: steps.plan.outputs.key_1 != '' && steps.nikatru-slot-1.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 1 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_1 != '' && steps.nikatru-slot-1.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -942,7 +972,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_1 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 2 (generated)
+        id: nikatru-slot-2
         if: steps.plan.outputs.key_2 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_2 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 2 again (generated)
+        if: steps.plan.outputs.key_2 != '' && steps.nikatru-slot-2.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 2 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_2 != '' && steps.nikatru-slot-2.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -957,7 +1002,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_2 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 3 (generated)
+        id: nikatru-slot-3
         if: steps.plan.outputs.key_3 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_3 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 3 again (generated)
+        if: steps.plan.outputs.key_3 != '' && steps.nikatru-slot-3.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 3 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_3 != '' && steps.nikatru-slot-3.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -972,7 +1032,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_3 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 4 (generated)
+        id: nikatru-slot-4
         if: steps.plan.outputs.key_4 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_4 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 4 again (generated)
+        if: steps.plan.outputs.key_4 != '' && steps.nikatru-slot-4.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 4 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_4 != '' && steps.nikatru-slot-4.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -987,7 +1062,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_4 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 5 (generated)
+        id: nikatru-slot-5
         if: steps.plan.outputs.key_5 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_5 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 5 again (generated)
+        if: steps.plan.outputs.key_5 != '' && steps.nikatru-slot-5.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 5 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_5 != '' && steps.nikatru-slot-5.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1002,7 +1092,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_5 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 6 (generated)
+        id: nikatru-slot-6
         if: steps.plan.outputs.key_6 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_6 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 6 again (generated)
+        if: steps.plan.outputs.key_6 != '' && steps.nikatru-slot-6.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 6 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_6 != '' && steps.nikatru-slot-6.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -1017,7 +1122,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_6 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 7 (generated)
+        id: nikatru-slot-7
         if: steps.plan.outputs.key_7 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_7 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 7 again (generated)
+        if: steps.plan.outputs.key_7 != '' && steps.nikatru-slot-7.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 7 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_7 != '' && steps.nikatru-slot-7.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

@@ -5,7 +5,7 @@ env:
 
 name: "Store submit: Snap Store"
 
-run-name: "Store submit: Snap Store · ${{ inputs.app }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Store submit: Snap Store · ${{ inputs.app }}${{ inputs.confirm == 'SUBMIT-TO-SNAP-STORE' && ' · SUBMIT' || inputs.promote_confirm == 'PROMOTE-SNAP-TO-STABLE' && ' · PROMOTE candidate to stable' || ' · dry run' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -265,6 +265,7 @@ jobs:
       contents: read
       deployments: write
       id-token: write
+      actions: read
     outputs:
       artifact: ${{ steps.bytes.outputs.artifact }}
       sha256: ${{ steps.bytes.outputs.sha256 }}
@@ -459,7 +460,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Install glitchtip-cli (pinned by version AND by digest)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -470,21 +472,70 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off (generated)
         id: nikatru-restore-2
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-2
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-2-b
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-2-c
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off was restored (generated)
+        id: nikatru-unrestored-2
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-restore-2-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-2.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off (generated)
         id: nikatru-unseal-2
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-2.outputs.cache-matched-key || steps.nikatru-restore-2-b.outputs.cache-matched-key || steps.nikatru-restore-2-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-2.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-2.outputs.cache-matched-key || steps.nikatru-restore-2-b.outputs.cache-matched-key || steps.nikatru-restore-2-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off where download-artifact put it (generated)
@@ -596,21 +647,70 @@ jobs:
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.15 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off (generated)
         id: nikatru-restore-3
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the ${{ needs.build-arm64.outputs.artifact }} hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-3
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the ${{ needs.build-arm64.outputs.artifact }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-3-b
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the ${{ needs.build-arm64.outputs.artifact }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-3-c
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no ${{ needs.build-arm64.outputs.artifact }} hand-off was restored (generated)
+        id: nikatru-unrestored-3
+        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-restore-3-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-3.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the ${{ needs.build-arm64.outputs.artifact }} hand-off (generated)
         id: nikatru-unseal-3
-        if: ${{ (success()) && steps.nikatru-restore-3.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-3.outputs.cache-matched-key || steps.nikatru-restore-3-b.outputs.cache-matched-key || steps.nikatru-restore-3-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-3.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-3.outputs.cache-matched-key || steps.nikatru-restore-3-b.outputs.cache-matched-key || steps.nikatru-restore-3-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the ${{ needs.build-arm64.outputs.artifact }} hand-off where download-artifact put it (generated)
@@ -661,7 +761,7 @@ jobs:
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
-          node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap
+          node tooling/ci/assert-translations-generated.mjs --for-submission=linux-snap --real-submission
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name submit-snap.dry-run.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
@@ -775,7 +875,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ steps.bytes.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Record the dry run in the [10]D-9 ledger (mode dry-run)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1117,7 +1218,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Generate the snapcraft recipe (arm64 bundle)
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1279,7 +1381,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ steps.bytes.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1399,21 +1502,70 @@ jobs:
         run: node tooling/ci/assert-e2e-legs.mjs --for-submission=linux-snap
       - name: Restore the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
         id: nikatru-restore-7
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the ${{ needs.dry-run.outputs.artifact }} hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-7
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the ${{ needs.dry-run.outputs.artifact }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key == '' && steps.nikatru-probe-7.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the ${{ needs.dry-run.outputs.artifact }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-7-b
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key == '' && steps.nikatru-probe-7.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the ${{ needs.dry-run.outputs.artifact }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key == '' && steps.nikatru-restore-7-b.outputs.cache-matched-key == '' && steps.nikatru-probe-7.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the ${{ needs.dry-run.outputs.artifact }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-7-c
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key == '' && steps.nikatru-restore-7-b.outputs.cache-matched-key == '' && steps.nikatru-probe-7.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no ${{ needs.dry-run.outputs.artifact }} hand-off was restored (generated)
+        id: nikatru-unrestored-7
+        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key == '' && steps.nikatru-restore-7-b.outputs.cache-matched-key == '' && steps.nikatru-restore-7-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-7.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the ${{ needs.dry-run.outputs.artifact }} hand-off (generated)
         id: nikatru-unseal-7
-        if: ${{ (success()) && steps.nikatru-restore-7.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-7.outputs.cache-matched-key || steps.nikatru-restore-7-b.outputs.cache-matched-key || steps.nikatru-restore-7-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-7.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-7.outputs.cache-matched-key || steps.nikatru-restore-7-b.outputs.cache-matched-key || steps.nikatru-restore-7-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-${{ needs.dry-run.outputs.artifact }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the ${{ needs.dry-run.outputs.artifact }} hand-off where download-artifact put it (generated)
@@ -1439,21 +1591,70 @@ jobs:
           printf '%s  %s\n' "$EXPECTED_SHA256" "$SNAP" | sha256sum --check --strict -
       - name: Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off (generated)
         id: nikatru-restore-8
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the ${{ needs.build-arm64.outputs.artifact }} hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-8
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the ${{ needs.build-arm64.outputs.artifact }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key == '' && steps.nikatru-probe-8.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-8-b
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key == '' && steps.nikatru-probe-8.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the ${{ needs.build-arm64.outputs.artifact }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key == '' && steps.nikatru-restore-8-b.outputs.cache-matched-key == '' && steps.nikatru-probe-8.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the ${{ needs.build-arm64.outputs.artifact }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-8-c
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key == '' && steps.nikatru-restore-8-b.outputs.cache-matched-key == '' && steps.nikatru-probe-8.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no ${{ needs.build-arm64.outputs.artifact }} hand-off was restored (generated)
+        id: nikatru-unrestored-8
+        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key == '' && steps.nikatru-restore-8-b.outputs.cache-matched-key == '' && steps.nikatru-restore-8-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-8.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the ${{ needs.build-arm64.outputs.artifact }} hand-off (generated)
         id: nikatru-unseal-8
-        if: ${{ (success()) && steps.nikatru-restore-8.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-8.outputs.cache-matched-key || steps.nikatru-restore-8-b.outputs.cache-matched-key || steps.nikatru-restore-8-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-8.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-8.outputs.cache-matched-key || steps.nikatru-restore-8-b.outputs.cache-matched-key || steps.nikatru-restore-8-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-${{ needs.build-arm64.outputs.artifact }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the ${{ needs.build-arm64.outputs.artifact }} hand-off where download-artifact put it (generated)
@@ -1487,21 +1688,70 @@ jobs:
           [ -n "$ARM64_SNAPCRAFT_VERSION" ] && [ "$ARM64_SNAPCRAFT_VERSION" = "$DRY_RUN_SNAPCRAFT_VERSION" ] || { echo "::error title=snapcraft pin::the arm64 snap was packed with snapcraft ${ARM64_SNAPCRAFT_VERSION:-unknown} and the amd64 one with ${DRY_RUN_SNAPCRAFT_VERSION:-unknown}; dispatch again so both run one snapcraft."; exit 1; }
       - name: Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off (generated)
         id: nikatru-restore-9
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-9
+        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-9-b
+        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-restore-9-b.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-9-c
+        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-restore-9-b.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off was restored (generated)
+        id: nikatru-unrestored-9
+        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-restore-9-b.outputs.cache-matched-key == '' && steps.nikatru-restore-9-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-9.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off (generated)
         id: nikatru-unseal-9
-        if: ${{ (success()) && steps.nikatru-restore-9.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-9.outputs.cache-matched-key || steps.nikatru-restore-9-b.outputs.cache-matched-key || steps.nikatru-restore-9-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-9.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-9.outputs.cache-matched-key || steps.nikatru-restore-9-b.outputs.cache-matched-key || steps.nikatru-restore-9-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ needs.gate.outputs.app }}-linux-snap-dry-run hand-off where download-artifact put it (generated)
@@ -1516,21 +1766,70 @@ jobs:
           rm -rf .nikatru-handoff/x
       - name: Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off (generated)
         id: nikatru-restore-10
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-10
+        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-10-b
+        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-restore-10-b.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-10-c
+        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-restore-10-b.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off was restored (generated)
+        id: nikatru-unrestored-10
+        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-restore-10-b.outputs.cache-matched-key == '' && steps.nikatru-restore-10-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-10.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off (generated)
         id: nikatru-unseal-10
-        if: ${{ (success()) && steps.nikatru-restore-10.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-10.outputs.cache-matched-key || steps.nikatru-restore-10-b.outputs.cache-matched-key || steps.nikatru-restore-10-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-10.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-10.outputs.cache-matched-key || steps.nikatru-restore-10-b.outputs.cache-matched-key || steps.nikatru-restore-10-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ needs.gate.outputs.app }}-linux-snap-arm64-dry-run hand-off where download-artifact put it (generated)

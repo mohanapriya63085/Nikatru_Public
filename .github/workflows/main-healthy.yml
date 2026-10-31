@@ -30,7 +30,7 @@ jobs:
   publish:
     name: Post main's health on the commit CI ran on
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 132
     permissions:
       contents: read
       actions: read
@@ -102,7 +102,9 @@ jobs:
           if [ -z "$NIKATRU_RELAY_ATTEMPT" ]; then NIKATRU_RELAY_ATTEMPT="$(gh api "$run" --jq .run_attempt)" || NIKATRU_RELAY_ATTEMPT=; fi
           case "$NIKATRU_RELAY_ATTEMPT" in ''|0|*[!0-9]*) echo "::error::nikatru_relay_attempt '$NIKATRU_RELAY_ATTEMPT' is not an attempt of run $NIKATRU_RELAY_RUN"; exit 1;; esac
           status=unread
-          for _ in $(seq 1 36); do
+          start="$(date +%s)"
+          waited=0
+          while :; do
             status="$(gh api "$run/attempts/$NIKATRU_RELAY_ATTEMPT" --jq .status)" || status=unread
             if [ "$status" = completed ]; then
               newest="$(gh api "$run" --jq '"\(.run_attempt) \(.status)"')" || newest=unread
@@ -114,9 +116,18 @@ jobs:
                   exit 0;;
               esac
             fi
-            sleep 5
+            waited=$(( $(date +%s) - start ))
+            if [ "$waited" -ge 7620 ]; then break; fi
+            if [ "$waited" -lt 180 ]; then pause=5; else pause=30; fi
+            sleep "$pause"
           done
-          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in 180 s (its last status: $status)"
+          case "$status" in
+            queued|in_progress|waiting|pending|requested)
+              echo "parent run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT still $status after $waited s: not read, superseded by the next relay"
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              exit 0;;
+          esac
+          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in $waited s (its last status: $status)"
           exit 1
       - name: Post the main-healthy status for the CI run that completed
         if: steps.nikatru-relay-wait.outputs.superseded != 'true'

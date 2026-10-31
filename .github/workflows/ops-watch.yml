@@ -5,7 +5,7 @@ env:
 
 name: Ops watch
 
-run-name: "Ops watch${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Ops watch${{ inputs.failure_ledger && ' · failure ledger' || '' }}${{ inputs.renovate_backlog && ' · Renovate backlog' || '' }}${{ inputs.code_scanning_age && ' · code-scanning age' || '' }}${{ inputs.tech_currency && ' · tech currency' || '' }}${{ inputs.dependency_advisories && ' · dependency advisories' || '' }}${{ inputs.self_review && ' · self-review' || '' }}${{ inputs.unattended && ' · unattended' || '' }}${{ inputs.digest && ' · digest' || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:
@@ -549,6 +549,18 @@ jobs:
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.20 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: No CI runner pool is unreachable at main's newest pool-sync
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NIKATRU_ADVISORY_OUT: ${{ runner.temp }}/pipeline-watch.md
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/check-pool-sync.mjs --advisory
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: File the pipeline watches' warnings against one durable issue
         if: ${{ !cancelled() }}
         env:
@@ -576,7 +588,18 @@ jobs:
           node tooling/ops/ops-issue.mjs --kind pipeline-watch --body-file "$body"
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.21 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.22 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+      - name: No outside read was answered from a last-good copy
+        if: ${{ !cancelled() }}
+        env:
+          RUNNER_BUDGET_LAST_GOOD: ${{ needs.runner-budget.outputs.last_good }}
+        run: |
+          NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
+          cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
+          node tooling/ops/check-last-good-reads.mjs
+          NIKATRU_QUIET_EOF
+          NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name ops-watch.heartbeats.23 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -1120,6 +1143,8 @@ jobs:
     needs: [nikatru-pin]
     name: Actions quota cannot silently stop the scheduled proofs
     runs-on: ubuntu-24.04
+    outputs:
+      last_good: ${{ steps.budget.outputs.last_good }}
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1193,6 +1218,7 @@ jobs:
         run: printf '/.nikatru-trusted/\n' >> "$(git rev-parse --git-path info/exclude)"
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Read the Actions usage ledger and compare it to the declared ceiling
+        id: budget
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -1207,9 +1233,9 @@ jobs:
           code=$?
           set -e
           if [ "$code" -eq 2 ]; then
-            echo "::error title=Actions quota is UNKNOWN — the duty did not run::NOTHING read the account's Actions billing ledger, so 'can the scheduled proofs still run tomorrow?' is unanswered. This fails on purpose: 'I could not look' must never read as 'I looked and it was fine'. In the shell the ledger is read through the bridge's POST /ops billing: a LOST line above names a missing NIKATRU_BRIDGE_OPS_URL or BRIDGE_READ_SECRET, or the bridge's own refusal. GITHUB_TOKEN is repository-scoped and carries no billing dimension."
+            echo "::error title=Actions quota is UNKNOWN — the duty did not run::NOTHING read the account's Actions billing ledger, so 'can the scheduled proofs still run tomorrow?' is unanswered. This fails on purpose: 'I could not look' must never read as 'I looked and it was fine'. In the shell the ledger is read through the bridge's POST /ops billing: a LOST line above names a missing NIKATRU_BRIDGE_OPS_URL or BRIDGE_READ_SECRET, or the bridge's own refusal. GITHUB_TOKEN is repository-scoped and carries no billing dimension. The repository's visibility is a gate too (macOS minutes are print-only only on a repository that READS public): an unread GET repos/{repo} with this step's GITHUB_TOKEN, or no token, is exit 2."
           elif [ "$code" -eq 1 ]; then
-            echo "::error title=Actions usage is over a declared ceiling — billed spend or macOS minutes::Read the FAIL line(s) above: either the current billing period's net-billed Actions spend is over the declared ceiling, so a spending limit can stop runs from STARTING and every scheduled proof in this repository goes dark together; or its macOS minutes are over CURRENT_PERIOD_MACOS_MINUTES_CEILING, which nets \$0.00 while the public-repo discount holds and costs ten free minutes each the day it does not. For spend, establish WHICH assumption broke — did the repository go private, did a lane move to a larger runner class, or did another repository on this account exhaust the shared allowance — before touching the ceiling. For macOS, the per-SKU and per-repo lines name the lane."
+            echo "::error title=Actions usage is not free — billed spend, a non-public repository or a larger runner class::Read the FAIL line(s) above. Either the current billing period's net-billed Actions MINUTES spend is over the declared ceiling, so a spending limit can stop runs from STARTING and every scheduled proof in this repository goes dark together; or the repository reads private or internal, so every minute draws on the 2,000-minute free allowance (Windows x2, macOS x10); or a current-period Minutes SKU is not one of the measured standard runners (a larger or GPU class, billed on public repositories too, or a renamed SKU to add from a ledger read). With any of those red, the macOS minutes are graded again at the private-allowance line and their FAIL shows the exposure. Establish WHICH assumption broke before touching a ceiling; the per-SKU and per-repo lines name the lane."
           fi
           exit "$code"
           NIKATRU_QUIET_EOF

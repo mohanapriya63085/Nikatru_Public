@@ -5,7 +5,7 @@ env:
 
 name: Status page
 
-run-name: "Status page${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Status page${{ inputs.gate_mode && format(' · gate {0}', inputs.gate_mode) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:

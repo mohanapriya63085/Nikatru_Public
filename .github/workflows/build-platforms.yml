@@ -869,7 +869,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: The .aab must be signed by the upload key, not the debug key
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
@@ -1053,7 +1054,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-${{ steps.agi_verify.outputs.artifact_name }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Store upload-kit-${{ steps.agi_verify.outputs.artifact_name }} in the bridge's private home (generated)
         shell: bash
         working-directory: ${{ github.workspace }}
@@ -1128,6 +1130,10 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+    permissions:
+      contents: read
+      checks: read
+      actions: read
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -1300,7 +1306,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Package MSIX (Microsoft Store)
         working-directory: apps/${{ matrix.app }}
         shell: bash
@@ -1425,7 +1432,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Hand this job's red detail to the report job, sealed (generated)
         id: nikatru-handoff
         if: always()
@@ -1457,6 +1465,10 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+    permissions:
+      contents: read
+      checks: read
+      actions: read
     steps:
       - name: Name the account and ssh the deploy key's ACL needs (generated)
         id: nikatru-key-account
@@ -1687,7 +1699,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Package MSIX (Microsoft Store, arm64)
         timeout-minutes: 2
         working-directory: apps/${{ matrix.app }}
@@ -1747,21 +1760,70 @@ jobs:
           if ($LASTEXITCODE -ne 0) { Write-Error "upload-native-symbols exited $LASTEXITCODE" }
       - name: Restore the store-${{ matrix.app }}-windows-msix hand-off (generated)
         id: nikatru-restore-6
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the store-${{ matrix.app }}-windows-msix hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-6
+        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the store-${{ matrix.app }}-windows-msix hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-probe-6.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the store-${{ matrix.app }}-windows-msix hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-6-b
+        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-probe-6.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the store-${{ matrix.app }}-windows-msix hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-restore-6-b.outputs.cache-matched-key == '' && steps.nikatru-probe-6.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the store-${{ matrix.app }}-windows-msix hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-6-c
+        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-restore-6-b.outputs.cache-matched-key == '' && steps.nikatru-probe-6.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no store-${{ matrix.app }}-windows-msix hand-off was restored (generated)
+        id: nikatru-unrestored-6
+        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key == '' && steps.nikatru-restore-6-b.outputs.cache-matched-key == '' && steps.nikatru-restore-6-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-6.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the store-${{ matrix.app }}-windows-msix hand-off (generated)
         id: nikatru-unseal-6
-        if: ${{ (success()) && steps.nikatru-restore-6.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-6.outputs.cache-matched-key || steps.nikatru-restore-6-b.outputs.cache-matched-key || steps.nikatru-restore-6-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-6.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-6.outputs.cache-matched-key || steps.nikatru-restore-6-b.outputs.cache-matched-key || steps.nikatru-restore-6-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-store-${{ matrix.app }}-windows-msix-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the store-${{ matrix.app }}-windows-msix hand-off where download-artifact put it (generated)
@@ -1839,6 +1901,10 @@ jobs:
       fail-fast: false
       matrix:
         app: ${{ fromJSON(needs.prepare.outputs.apps) }}
+    permissions:
+      contents: read
+      checks: read
+      actions: read
     steps:
       - name: Check out the private tree (generated)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -2040,7 +2106,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Generate the snapcraft recipe
         timeout-minutes: 1
         run: |
@@ -2488,7 +2555,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Package the macOS .pkg (Mac App Store)
         if: env.APPLE_SIGNING_POSTURE == 'release-signed'
         working-directory: apps/${{ matrix.app }}
@@ -2748,21 +2816,70 @@ jobs:
       - name: Restore the release-dist-${{ matrix.app }} hand-off (generated)
         id: nikatru-restore-9
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the release-dist-${{ matrix.app }} hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-9
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the release-dist-${{ matrix.app }} hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the release-dist-${{ matrix.app }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-9-b
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the release-dist-${{ matrix.app }} hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-restore-9-b.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the release-dist-${{ matrix.app }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-9-c
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-restore-9-b.outputs.cache-matched-key == '' && steps.nikatru-probe-9.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no release-dist-${{ matrix.app }} hand-off was restored (generated)
+        id: nikatru-unrestored-9
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key == '' && steps.nikatru-restore-9-b.outputs.cache-matched-key == '' && steps.nikatru-restore-9-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-9.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the release-dist-${{ matrix.app }} hand-off (generated)
         id: nikatru-unseal-9
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && steps.nikatru-restore-9.outputs.cache-matched-key != '' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag' || needs.release.outputs.nothing_owed != matrix.app) && (steps.nikatru-restore-9.outputs.cache-matched-key || steps.nikatru-restore-9-b.outputs.cache-matched-key || steps.nikatru-restore-9-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-9.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-9.outputs.cache-matched-key || steps.nikatru-restore-9-b.outputs.cache-matched-key || steps.nikatru-restore-9-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the release-dist-${{ matrix.app }} hand-off where download-artifact put it (generated)
@@ -2852,6 +2969,48 @@ jobs:
       - name: Restore the symbols-${{ matrix.app }}-linux-android hand-off (generated)
         id: nikatru-restore-10
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Look up the symbols-${{ matrix.app }}-linux-android hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-10
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ matrix.app }}-linux-android hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ matrix.app }}-linux-android hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-10-b
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ matrix.app }}-linux-android hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-restore-10-b.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ matrix.app }}-linux-android hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-10-c
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key == '' && steps.nikatru-restore-10-b.outputs.cache-matched-key == '' && steps.nikatru-probe-10.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -2860,12 +3019,12 @@ jobs:
           enableCrossOsArchive: true
       - name: Unseal the symbols-${{ matrix.app }}-linux-android hand-off (generated)
         id: nikatru-unseal-10
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-10.outputs.cache-matched-key != '' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && (steps.nikatru-restore-10.outputs.cache-matched-key || steps.nikatru-restore-10-b.outputs.cache-matched-key || steps.nikatru-restore-10-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-10.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-10.outputs.cache-matched-key || steps.nikatru-restore-10-b.outputs.cache-matched-key || steps.nikatru-restore-10-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-linux-android-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-linux-android hand-off where download-artifact put it (generated)
@@ -2881,6 +3040,48 @@ jobs:
       - name: Restore the symbols-${{ matrix.app }}-windows hand-off (generated)
         id: nikatru-restore-11
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Look up the symbols-${{ matrix.app }}-windows hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-11
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ matrix.app }}-windows hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key == '' && steps.nikatru-probe-11.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ matrix.app }}-windows hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-11-b
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key == '' && steps.nikatru-probe-11.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ matrix.app }}-windows hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key == '' && steps.nikatru-restore-11-b.outputs.cache-matched-key == '' && steps.nikatru-probe-11.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ matrix.app }}-windows hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-11-c
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key == '' && steps.nikatru-restore-11-b.outputs.cache-matched-key == '' && steps.nikatru-probe-11.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -2889,12 +3090,12 @@ jobs:
           enableCrossOsArchive: true
       - name: Unseal the symbols-${{ matrix.app }}-windows hand-off (generated)
         id: nikatru-unseal-11
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-11.outputs.cache-matched-key != '' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && (steps.nikatru-restore-11.outputs.cache-matched-key || steps.nikatru-restore-11-b.outputs.cache-matched-key || steps.nikatru-restore-11-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-11.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-11.outputs.cache-matched-key || steps.nikatru-restore-11-b.outputs.cache-matched-key || steps.nikatru-restore-11-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-windows-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-windows hand-off where download-artifact put it (generated)
@@ -2910,6 +3111,48 @@ jobs:
       - name: Restore the symbols-${{ matrix.app }}-windows-arm64 hand-off (generated)
         id: nikatru-restore-12
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Look up the symbols-${{ matrix.app }}-windows-arm64 hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-12
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ matrix.app }}-windows-arm64 hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key == '' && steps.nikatru-probe-12.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ matrix.app }}-windows-arm64 hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-12-b
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key == '' && steps.nikatru-probe-12.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ matrix.app }}-windows-arm64 hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key == '' && steps.nikatru-restore-12-b.outputs.cache-matched-key == '' && steps.nikatru-probe-12.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ matrix.app }}-windows-arm64 hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-12-c
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key == '' && steps.nikatru-restore-12-b.outputs.cache-matched-key == '' && steps.nikatru-probe-12.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -2918,12 +3161,12 @@ jobs:
           enableCrossOsArchive: true
       - name: Unseal the symbols-${{ matrix.app }}-windows-arm64 hand-off (generated)
         id: nikatru-unseal-12
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-12.outputs.cache-matched-key != '' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && (steps.nikatru-restore-12.outputs.cache-matched-key || steps.nikatru-restore-12-b.outputs.cache-matched-key || steps.nikatru-restore-12-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-12.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-12.outputs.cache-matched-key || steps.nikatru-restore-12-b.outputs.cache-matched-key || steps.nikatru-restore-12-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-windows-arm64-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-windows-arm64 hand-off where download-artifact put it (generated)
@@ -2939,6 +3182,48 @@ jobs:
       - name: Restore the symbols-${{ matrix.app }}-linux-arm64 hand-off (generated)
         id: nikatru-restore-13
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Look up the symbols-${{ matrix.app }}-linux-arm64 hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-13
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ matrix.app }}-linux-arm64 hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key == '' && steps.nikatru-probe-13.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ matrix.app }}-linux-arm64 hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-13-b
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key == '' && steps.nikatru-probe-13.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ matrix.app }}-linux-arm64 hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key == '' && steps.nikatru-restore-13-b.outputs.cache-matched-key == '' && steps.nikatru-probe-13.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ matrix.app }}-linux-arm64 hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-13-c
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key == '' && steps.nikatru-restore-13-b.outputs.cache-matched-key == '' && steps.nikatru-probe-13.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -2947,12 +3232,12 @@ jobs:
           enableCrossOsArchive: true
       - name: Unseal the symbols-${{ matrix.app }}-linux-arm64 hand-off (generated)
         id: nikatru-unseal-13
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-13.outputs.cache-matched-key != '' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && (steps.nikatru-restore-13.outputs.cache-matched-key || steps.nikatru-restore-13-b.outputs.cache-matched-key || steps.nikatru-restore-13-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-13.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-13.outputs.cache-matched-key || steps.nikatru-restore-13-b.outputs.cache-matched-key || steps.nikatru-restore-13-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-linux-arm64-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-linux-arm64 hand-off where download-artifact put it (generated)
@@ -2968,6 +3253,48 @@ jobs:
       - name: Restore the symbols-${{ matrix.app }}-apple hand-off (generated)
         id: nikatru-restore-14
         if: (startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag'
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Look up the symbols-${{ matrix.app }}-apple hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-14
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the symbols-${{ matrix.app }}-apple hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key == '' && steps.nikatru-probe-14.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the symbols-${{ matrix.app }}-apple hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-14-b
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key == '' && steps.nikatru-probe-14.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the symbols-${{ matrix.app }}-apple hand-off again (generated)
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key == '' && steps.nikatru-restore-14-b.outputs.cache-matched-key == '' && steps.nikatru-probe-14.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the symbols-${{ matrix.app }}-apple hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-14-c
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key == '' && steps.nikatru-restore-14-b.outputs.cache-matched-key == '' && steps.nikatru-probe-14.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -2976,12 +3303,12 @@ jobs:
           enableCrossOsArchive: true
       - name: Unseal the symbols-${{ matrix.app }}-apple hand-off (generated)
         id: nikatru-unseal-14
-        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && steps.nikatru-restore-14.outputs.cache-matched-key != '' }}
+        if: ${{ ((startsWith(github.event.client_payload.ref || 'refs/heads/main', 'refs/tags/') && 'tag' || 'branch') == 'tag') && (steps.nikatru-restore-14.outputs.cache-matched-key || steps.nikatru-restore-14-b.outputs.cache-matched-key || steps.nikatru-restore-14-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-14.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-14.outputs.cache-matched-key || steps.nikatru-restore-14-b.outputs.cache-matched-key || steps.nikatru-restore-14-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-symbols-${{ matrix.app }}-apple-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the symbols-${{ matrix.app }}-apple hand-off where download-artifact put it (generated)
@@ -3081,6 +3408,48 @@ jobs:
           } >> "$GITHUB_ENV"
       - name: Restore the apps-gov-in-${{ matrix.app }}-apk hand-off (generated)
         id: nikatru-restore-15
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Look up the apps-gov-in-${{ matrix.app }}-apk hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-15
+        if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the apps-gov-in-${{ matrix.app }}-apk hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key == '' && steps.nikatru-probe-15.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the apps-gov-in-${{ matrix.app }}-apk hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-15-b
+        if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key == '' && steps.nikatru-probe-15.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the apps-gov-in-${{ matrix.app }}-apk hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key == '' && steps.nikatru-restore-15-b.outputs.cache-matched-key == '' && steps.nikatru-probe-15.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the apps-gov-in-${{ matrix.app }}-apk hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-15-c
+        if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key == '' && steps.nikatru-restore-15-b.outputs.cache-matched-key == '' && steps.nikatru-probe-15.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
@@ -3089,12 +3458,12 @@ jobs:
           enableCrossOsArchive: true
       - name: Unseal the apps-gov-in-${{ matrix.app }}-apk hand-off (generated)
         id: nikatru-unseal-15
-        if: ${{ (success()) && steps.nikatru-restore-15.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-15.outputs.cache-matched-key || steps.nikatru-restore-15-b.outputs.cache-matched-key || steps.nikatru-restore-15-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_DETAIL_KEY: ${{ secrets.NIKATRU_DETAIL_KEY }}
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-15.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-15.outputs.cache-matched-key || steps.nikatru-restore-15-b.outputs.cache-matched-key || steps.nikatru-restore-15-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-apps-gov-in-${{ matrix.app }}-apk-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the apps-gov-in-${{ matrix.app }}-apk hand-off where download-artifact put it (generated)
@@ -3308,7 +3677,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-release-dist-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: The register must be able to name where this ships
         env:
           APP: ${{ matrix.app }}
@@ -3411,7 +3781,7 @@ jobs:
     defaults:
       run:
         working-directory: ${{ github.workspace }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -3430,7 +3800,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 .github/nikatru/report.py plan .github/nikatru/build-platforms.json
       - name: Restore hand-off 0 (generated)
+        id: nikatru-slot-0
         if: steps.plan.outputs.key_0 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_0 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 0 again (generated)
+        if: steps.plan.outputs.key_0 != '' && steps.nikatru-slot-0.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 0 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_0 != '' && steps.nikatru-slot-0.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3445,7 +3830,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_0 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 1 (generated)
+        id: nikatru-slot-1
         if: steps.plan.outputs.key_1 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_1 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 1 again (generated)
+        if: steps.plan.outputs.key_1 != '' && steps.nikatru-slot-1.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 1 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_1 != '' && steps.nikatru-slot-1.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3460,7 +3860,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_1 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 2 (generated)
+        id: nikatru-slot-2
         if: steps.plan.outputs.key_2 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_2 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 2 again (generated)
+        if: steps.plan.outputs.key_2 != '' && steps.nikatru-slot-2.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 2 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_2 != '' && steps.nikatru-slot-2.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3475,7 +3890,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_2 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 3 (generated)
+        id: nikatru-slot-3
         if: steps.plan.outputs.key_3 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_3 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 3 again (generated)
+        if: steps.plan.outputs.key_3 != '' && steps.nikatru-slot-3.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 3 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_3 != '' && steps.nikatru-slot-3.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3490,7 +3920,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_3 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 4 (generated)
+        id: nikatru-slot-4
         if: steps.plan.outputs.key_4 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_4 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 4 again (generated)
+        if: steps.plan.outputs.key_4 != '' && steps.nikatru-slot-4.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 4 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_4 != '' && steps.nikatru-slot-4.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3505,7 +3950,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_4 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 5 (generated)
+        id: nikatru-slot-5
         if: steps.plan.outputs.key_5 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_5 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 5 again (generated)
+        if: steps.plan.outputs.key_5 != '' && steps.nikatru-slot-5.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 5 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_5 != '' && steps.nikatru-slot-5.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3520,7 +3980,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_5 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 6 (generated)
+        id: nikatru-slot-6
         if: steps.plan.outputs.key_6 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_6 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 6 again (generated)
+        if: steps.plan.outputs.key_6 != '' && steps.nikatru-slot-6.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 6 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_6 != '' && steps.nikatru-slot-6.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
@@ -3535,7 +4010,22 @@ jobs:
           NIKATRU_KEY: ${{ steps.plan.outputs.key_6 }}
         run: python3 .github/nikatru/report.py place "$NIKATRU_KEY"
       - name: Restore hand-off 7 (generated)
+        id: nikatru-slot-7
         if: steps.plan.outputs.key_7 != ''
+        timeout-minutes: 1
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-detail
+          key: ${{ steps.plan.outputs.key_7 }}
+          enableCrossOsArchive: true
+          fail-on-cache-miss: true
+      - name: Wait 20 s before restoring hand-off 7 again (generated)
+        if: steps.plan.outputs.key_7 != '' && steps.nikatru-slot-7.outcome == 'failure'
+        run: sleep 20
+      - name: Restore hand-off 7 again, as its first download failed (generated)
+        if: steps.plan.outputs.key_7 != '' && steps.nikatru-slot-7.outcome == 'failure'
+        timeout-minutes: 1
         continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:

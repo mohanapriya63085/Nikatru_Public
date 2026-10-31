@@ -329,7 +329,7 @@ jobs:
           # the same rule, so a week with no Darwin input change proves Android, Linux, Windows and web
           # ONLY, and says so on the run: a green with the iOS/macOS jobs skipped is no proof for an
           # iOS or macOS row (channel-register.json: a row's nativeAuth cites a green job on ITS format).
-          # Forcing them weekly is ~4 macOS legs per app per week against the macOS ceiling — spend.
+          # Forcing them weekly is ~4 macOS legs per app per week in the 5-job macOS queue — throughput.
           # ⏱ 2026-10-17 · review of #757 (third review, MAJOR 1): published through `::nikatru-public::` — the shell's
           # quiet-step echoes nothing else of a green step, so a plain ::notice or a step-summary line never reached the
           # run. This step is the one public-shell.json publicLines names for this job. The proof itself is the ios /

@@ -5,7 +5,7 @@ env:
 
 name: Review crawl
 
-run-name: "Review crawl${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "Review crawl${{ inputs.target && format(' · {0}', inputs.target) || '' }}${{ inputs.phase && format(' · phase {0}', inputs.phase) || '' }}${{ inputs.matrix && format(' · matrix {0}', inputs.matrix) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
@@ -350,7 +350,7 @@ jobs:
     needs: [nikatru-pin]
     name: The crawler reaches every fixture route and control
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -475,8 +475,10 @@ jobs:
     permissions:
       contents: read
       id-token: write
+      actions: read
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         app: ${{ fromJSON(needs.plan.outputs.apps) }}
     steps:
@@ -698,7 +700,8 @@ jobs:
         shell: bash
         env:
           NIKATRU_HANDOFF_KEY: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
-        run: echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
+          GH_TOKEN: ${{ github.token }}
+        run: for t in 0 10 20 30 40 50 60 70 80 90; do [ "$t" = 0 ] || sleep 10; if j="$(curl -fsS --max-time 20 -H "Authorization:Bearer $GH_TOKEN" -H "Accept:application/vnd.github+json" "${GITHUB_API_URL:-https://api.github.com}/repos/$GITHUB_REPOSITORY/actions/caches?key=$NIKATRU_HANDOFF_KEY&per_page=100" | tr -d ' \t\r\n')"; then for x in "$NIKATRU_HANDOFF_KEY" "$NIKATRU_HANDOFF_KEY-r2" "$NIKATRU_HANDOFF_KEY-r3"; do case "$j" in *"\"key\":\"$x\""*) echo "::notice title=hand-off::the save of $x is in the cache, listed by the caches API $t s after the last confirm missed (the cache's read-after-write lag)"; exit 0;; esac; done; fi; done; echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor $NIKATRU_HANDOFF_KEY-r2, $NIKATRU_HANDOFF_KEY-r3) is in the cache, so this run's later jobs cannot restore it; this job fails so a failed-jobs re-run re-runs it" && exit 1
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -723,6 +726,7 @@ jobs:
       id-token: write
     strategy:
       fail-fast: false
+      max-parallel: 2
       matrix:
         app: ${{ fromJSON(needs.plan.outputs.apps) }}
     steps:
@@ -799,21 +803,70 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - name: Restore the review-crawl-demo-web-${{ matrix.app }} hand-off (generated)
         id: nikatru-restore-2
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the review-crawl-demo-web-${{ matrix.app }} hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-2
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the review-crawl-demo-web-${{ matrix.app }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the review-crawl-demo-web-${{ matrix.app }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-2-b
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the review-crawl-demo-web-${{ matrix.app }} hand-off again (generated)
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the review-crawl-demo-web-${{ matrix.app }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-2-c
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-probe-2.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no review-crawl-demo-web-${{ matrix.app }} hand-off was restored (generated)
+        id: nikatru-unrestored-2
+        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key == '' && steps.nikatru-restore-2-b.outputs.cache-matched-key == '' && steps.nikatru-restore-2-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-2.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the review-crawl-demo-web-${{ matrix.app }} hand-off (generated)
         id: nikatru-unseal-2
-        if: ${{ (success()) && steps.nikatru-restore-2.outputs.cache-matched-key != '' }}
+        if: ${{ (success()) && (steps.nikatru-restore-2.outputs.cache-matched-key || steps.nikatru-restore-2-b.outputs.cache-matched-key || steps.nikatru-restore-2-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-2.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-2.outputs.cache-matched-key || steps.nikatru-restore-2-b.outputs.cache-matched-key || steps.nikatru-restore-2-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-review-crawl-demo-web-${{ matrix.app }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the review-crawl-demo-web-${{ matrix.app }} hand-off where download-artifact put it (generated)
@@ -1025,21 +1078,70 @@ jobs:
       - name: Restore the review-crawl-demo-web-${{ matrix.cell.target }} hand-off (generated)
         id: nikatru-restore-3
         if: steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main'
+        timeout-minutes: 2
+        continue-on-error: true
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: .nikatru-handoff/sealed
           key: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-
           enableCrossOsArchive: true
-          fail-on-cache-miss: true
+      - name: Look up the review-crawl-demo-web-${{ matrix.cell.target }} hand-off, as its restore matched nothing (generated)
+        id: nikatru-probe-3
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key == '' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-
+          lookup-only: true
+          enableCrossOsArchive: true
+      - name: Wait 20 s before restoring the review-crawl-demo-web-${{ matrix.cell.target }} hand-off again (generated)
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 20
+      - name: "Restore the review-crawl-demo-web-${{ matrix.cell.target }} hand-off again (attempt 2): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-3-b
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Wait 60 s before restoring the review-crawl-demo-web-${{ matrix.cell.target }} hand-off again (generated)
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        shell: bash
+        run: sleep 60
+      - name: "Restore the review-crawl-demo-web-${{ matrix.cell.target }} hand-off again (attempt 3): the entry is in the cache, its download was refused (generated)"
+        id: nikatru-restore-3-c
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-probe-3.outputs.cache-matched-key != '' }}
+        timeout-minutes: 2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: .nikatru-handoff/sealed
+          key: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-
+          enableCrossOsArchive: true
+      - name: Fail when no review-crawl-demo-web-${{ matrix.cell.target }} hand-off was restored (generated)
+        id: nikatru-unrestored-3
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key == '' && steps.nikatru-restore-3-b.outputs.cache-matched-key == '' && steps.nikatru-restore-3-c.outputs.cache-matched-key == '' }}
+        shell: bash
+        env:
+          NIKATRU_HANDOFF_KEY: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          NIKATRU_PROBED: ${{ steps.nikatru-probe-3.outputs.cache-matched-key }}
+        run: if [ -n "$NIKATRU_PROBED" ]; then echo "::error title=hand-off::the hand-off $NIKATRU_PROBED is in the cache, but 3 downloads were refused (Egress is over the account limit); a failed-jobs re-run retries it"; else echo "::error title=hand-off::no save of $NIKATRU_HANDOFF_KEY (nor -r2, -r3) is in the cache"; fi; exit 1
       - name: Unseal the review-crawl-demo-web-${{ matrix.cell.target }} hand-off (generated)
         id: nikatru-unseal-3
-        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && steps.nikatru-restore-3.outputs.cache-matched-key != '' }}
+        if: ${{ (steps.bundle.outputs.kind == 'flutter-web' && (github.event.client_payload.ref || inputs.private_ref || 'refs/heads/main') == 'refs/heads/main') && (steps.nikatru-restore-3.outputs.cache-matched-key || steps.nikatru-restore-3-b.outputs.cache-matched-key || steps.nikatru-restore-3-c.outputs.cache-matched-key) != '' }}
         shell: bash
         working-directory: ${{ github.workspace }}
         env:
           NIKATRU_HANDOFF_KEY_FILE: ${{ github.workspace }}/../.nikatru-shell/handoff.key
-          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-3.outputs.cache-matched-key }}
+          NIKATRU_HANDOFF_KEY: ${{ steps.nikatru-restore-3.outputs.cache-matched-key || steps.nikatru-restore-3-b.outputs.cache-matched-key || steps.nikatru-restore-3-c.outputs.cache-matched-key }}
           NIKATRU_HANDOFF_PREFIX: nikatru-handoff-review-crawl-demo-web-${{ matrix.cell.target }}-${{ github.run_id }}-
         run: node tooling/ci/shell-handoff.mjs unseal
       - name: Place the review-crawl-demo-web-${{ matrix.cell.target }} hand-off where download-artifact put it (generated)

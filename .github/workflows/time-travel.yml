@@ -5,7 +5,7 @@ env:
 
 name: Time travel
 
-run-name: "Time travel${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
+run-name: "Time travel${{ inputs.instant && format(' · at {0}', inputs.instant) || '' }}${{ inputs.worker_slot && format(' [worker slot {0}]', inputs.worker_slot) || '' }}"
 
 on:
   workflow_dispatch:

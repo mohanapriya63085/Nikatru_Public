@@ -136,7 +136,7 @@ jobs:
     name: Laptop state, PR board, run ledger
     if: (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 137
     permissions:
       contents: read
       statuses: read
@@ -203,7 +203,9 @@ jobs:
           if [ -z "$NIKATRU_RELAY_ATTEMPT" ]; then NIKATRU_RELAY_ATTEMPT="$(gh api "$run" --jq .run_attempt)" || NIKATRU_RELAY_ATTEMPT=; fi
           case "$NIKATRU_RELAY_ATTEMPT" in ''|0|*[!0-9]*) echo "::error::nikatru_relay_attempt '$NIKATRU_RELAY_ATTEMPT' is not an attempt of run $NIKATRU_RELAY_RUN"; exit 1;; esac
           status=unread
-          for _ in $(seq 1 36); do
+          start="$(date +%s)"
+          waited=0
+          while :; do
             status="$(gh api "$run/attempts/$NIKATRU_RELAY_ATTEMPT" --jq .status)" || status=unread
             if [ "$status" = completed ]; then
               newest="$(gh api "$run" --jq '"\(.run_attempt) \(.status)"')" || newest=unread
@@ -215,9 +217,18 @@ jobs:
                   exit 0;;
               esac
             fi
-            sleep 5
+            waited=$(( $(date +%s) - start ))
+            if [ "$waited" -ge 7620 ]; then break; fi
+            if [ "$waited" -lt 180 ]; then pause=5; else pause=30; fi
+            sleep "$pause"
           done
-          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in 180 s (its last status: $status)"
+          case "$status" in
+            queued|in_progress|waiting|pending|requested)
+              echo "parent run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT still $status after $waited s: not read, superseded by the next relay"
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              exit 0;;
+          esac
+          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in $waited s (its last status: $status)"
           exit 1
       - name: Check out private main's composite actions (generated)
         if: steps.nikatru-relay-wait.outputs.superseded != 'true'
@@ -250,7 +261,7 @@ jobs:
           node tooling/autopilot/watch.mjs
           NIKATRU_QUIET_EOF
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
-          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name autopilot-watch.watch.3 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
+          node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name autopilot-watch.watch.3 --public -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: Store this job's red detail in the bridge's private home (generated)
         if: always()
         continue-on-error: true
@@ -269,7 +280,7 @@ jobs:
     name: E2E after a web deploy
     if: (github.event.client_payload.ref || 'refs/heads/main') == 'refs/heads/main'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 132
     permissions:
       contents: read
       actions: write
@@ -335,7 +346,9 @@ jobs:
           if [ -z "$NIKATRU_RELAY_ATTEMPT" ]; then NIKATRU_RELAY_ATTEMPT="$(gh api "$run" --jq .run_attempt)" || NIKATRU_RELAY_ATTEMPT=; fi
           case "$NIKATRU_RELAY_ATTEMPT" in ''|0|*[!0-9]*) echo "::error::nikatru_relay_attempt '$NIKATRU_RELAY_ATTEMPT' is not an attempt of run $NIKATRU_RELAY_RUN"; exit 1;; esac
           status=unread
-          for _ in $(seq 1 36); do
+          start="$(date +%s)"
+          waited=0
+          while :; do
             status="$(gh api "$run/attempts/$NIKATRU_RELAY_ATTEMPT" --jq .status)" || status=unread
             if [ "$status" = completed ]; then
               newest="$(gh api "$run" --jq '"\(.run_attempt) \(.status)"')" || newest=unread
@@ -347,9 +360,18 @@ jobs:
                   exit 0;;
               esac
             fi
-            sleep 5
+            waited=$(( $(date +%s) - start ))
+            if [ "$waited" -ge 7620 ]; then break; fi
+            if [ "$waited" -lt 180 ]; then pause=5; else pause=30; fi
+            sleep "$pause"
           done
-          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in 180 s (its last status: $status)"
+          case "$status" in
+            queued|in_progress|waiting|pending|requested)
+              echo "parent run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT still $status after $waited s: not read, superseded by the next relay"
+              echo "superseded=true" >> "$GITHUB_OUTPUT"
+              exit 0;;
+          esac
+          echo "::error::run $NIKATRU_RELAY_RUN attempt $NIKATRU_RELAY_ATTEMPT did not complete in $waited s (its last status: $status)"
           exit 1
       - name: Check out private main's composite actions (generated)
         if: steps.nikatru-relay-wait.outputs.superseded != 'true'

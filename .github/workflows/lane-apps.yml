@@ -13,12 +13,19 @@ on:
         required: false
         default: ''
         type: string
+      nikatru_tier:
+        description: The CI tier the calling run's pin decided, light or full (generated; empty is full).
+        required: false
+        default: ''
+        type: string
     secrets:
       GH_POOL_DISPATCH_TOKEN_POOL_A:
         required: false
       GH_POOL_DISPATCH_TOKEN_POOL_B:
         required: false
       GH_POOL_DISPATCH_TOKEN_POOL_C:
+        required: false
+      NIKATRU_POOL_HANDOFF_KEY:
         required: false
       PRIVATE_DEPLOY_KEY:
         required: true
@@ -113,6 +120,8 @@ jobs:
       - uses: ./.nikatru-trusted/.github/actions/setup-node
       - id: detect
         name: Does this change touch the apps lane
+        env:
+          NIKATRU_TIER: ${{ inputs.nikatru_tier }}
         run: |
           NIKATRU_QUIET="$(mktemp "${RUNNER_TEMP:-/tmp}/nikatru-step.XXXXXX")"
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
@@ -1365,6 +1374,7 @@ jobs:
           GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
           GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
           GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
+          NIKATRU_POOL_HANDOFF_KEY: ${{ secrets.NIKATRU_POOL_HANDOFF_KEY }}
           POOL_NEEDS: ${{ toJSON(needs) }}
           NIKATRU_POOLS: ${{ vars.NIKATRU_POOLS }}
         run: |
@@ -1515,6 +1525,7 @@ jobs:
           GH_POOL_DISPATCH_TOKEN_POOL_A: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_A }}
           GH_POOL_DISPATCH_TOKEN_POOL_B: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_B }}
           GH_POOL_DISPATCH_TOKEN_POOL_C: ${{ secrets.GH_POOL_DISPATCH_TOKEN_POOL_C }}
+          NIKATRU_POOL_HANDOFF_KEY: ${{ secrets.NIKATRU_POOL_HANDOFF_KEY }}
           POOL_CHILDREN: ${{ needs.pool-apps.outputs.children }}
           POOL_NEEDS: ${{ toJSON(needs) }}
         run: |

@@ -13,6 +13,11 @@ on:
         required: false
         default: ''
         type: string
+      nikatru_tier:
+        description: The CI tier the calling run's pin decided, light or full (generated; empty is full).
+        required: false
+        default: ''
+        type: string
     secrets:
       PRIVATE_DEPLOY_KEY:
         required: true

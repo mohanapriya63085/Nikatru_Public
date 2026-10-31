@@ -62,6 +62,12 @@
 #                           RUNNER_SOURCES file without the lead's RUNNER_LABEL (A7-05/A7-06) is a
 #                           wait recorded as the gate's HOLD (green step, `::warning`), which send
 #                           posts pending; the step output `meta` is `clear` only when it decided so
+#   report.py tier          (the pin job's last step, ci.yml only; runbook §0e rule 2) this run's CI tier,
+#                           `light` or `full`, to $GITHUB_OUTPUT `tier` with its reason printed: `full`
+#                           unless the run is a pull_request, its ref is not refs/heads/train/*, the
+#                           NIKATRU_TIER_LIGHT variable is `on`, POST /pr-meta answered (the same
+#                           read_pr_meta as pr-meta) and the PR carries no `ci-full` label. Fails CLOSED:
+#                           any doubt is `full`, and it always exits 0 (the job output defaults to full)
 #
 #   nikatru-report — the report secret; restores nothing, runs nothing another job
 #   wrote (assert-public-shell.mjs limb I). A fresh sparse checkout of this shell, then
@@ -179,6 +185,15 @@
 # success. The residual, said: the private status, not the Public run's colour, is the gate's verdict; a Public run
 # that is green on a hold reads pending privately, and the landers still refuse it.
 #
+# ⏱ 2026-10-27 (ci-tier-shell, runbook §0e rule 2 "one full CI per batch, not per PR"): A LIGHT RUN SAYS SO. When
+# the pin job decided this run's tier `light` (`tier`, above: lane-build deferred to the train's full CI), the report
+# job hands NIKATRU_TIER=light to `send`, and the summary of EVERY status it posts ends TIER_LIGHT_SUFFIX, inside
+# SUMMARY_MAX_CHARS (the run text is trimmed, never the suffix). A full run adds no word: every status posted before
+# the cut-over was full, so a reader reads "no word" as full. NO SUCH READER IS IN THIS TREE YET (review of #1148,
+# finding 3): the landing rule that refuses a light-green PR landing alone (lane 2's train-land/full-tier-ensure) is
+# out of tree, and tooling/ops/land-rules.mjs / land-gate.mjs grade the ci-gate conclusion only. So the switch
+# (NIKATRU_TIER_LIGHT) stays off until that rule lands: docs/ci/README.md "The CI tier", Ships OFF.
+#
 # Exit 0 every report accepted (handoff: sealed, or nothing to hand over; collect: the
 # bundle written) · 1 a report refused or not delivered (a verdict that did not land
 # must not look green) · 2 COVERAGE LOST: no config, no bridge URL, no secret, no sha —
@@ -228,6 +243,15 @@ HOLD_HEADER = '### HOLD '
 # (cleared), or the hold it recorded. Any other value, or none, is not clear.
 GATE_CLEAR = 'clear'
 GATE_HOLD = 'hold'
+# ⏱ 2026-10-27 · ci-tier-shell: the CI tier (`tier`, `summary_of`). gen-public-shell.mjs holds the same names
+# (TIER_VAR, TIER_LIGHT_VAR, TIER_LABEL; test/gen-public-shell.test.mjs pins them equal).
+TIER_ENV = 'NIKATRU_TIER'
+TIER_LIGHT = 'light'
+TIER_FULL = 'full'
+TIER_LIGHT_SUFFIX = ' · tier light'
+TIER_SWITCH = 'NIKATRU_TIER_LIGHT'
+TIER_LABEL = 'ci-full'
+TRAIN_REF = re.compile(r'^refs/heads/train/')
 # The agent every POST to the bridge names (B1): never urllib's default, which the edge bans.
 USER_AGENT = 'nikatru-shell-report/1'
 COLLECTED_DIR = '.nikatru-collected'
@@ -698,6 +722,12 @@ def cleared(item, cfg, env, detail):
     return env.get('NIKATRU_GATE_META', '') == GATE_CLEAR and not sections_of(detail, HOLD_HEADER)
 
 
+def summary_of(text, env):
+    """A status summary within SUMMARY_MAX_CHARS, ending TIER_LIGHT_SUFFIX on a light run (the text trimmed first)."""
+    suffix = TIER_LIGHT_SUFFIX if env.get(TIER_ENV, '') == TIER_LIGHT else ''
+    return text[:SUMMARY_MAX_CHARS - len(suffix)] + suffix
+
+
 def build(context, state, env, detail, gate=False):
     run_id, attempt = int(env['GITHUB_RUN_ID']), int(env['GITHUB_RUN_ATTEMPT'])
     body = {
@@ -706,12 +736,12 @@ def build(context, state, env, detail, gate=False):
         'sha': env['NIKATRU_HEAD_SHA'],
         'context': context,
         'state': state,
-        'summary': f'{context}: {state} (public run {run_id}, attempt {attempt})'[:SUMMARY_MAX_CHARS],
+        'summary': summary_of(f'{context}: {state} (public run {run_id}, attempt {attempt})', env),
     }
     if state == 'pending':
         # A HOLD: the summary says what it waits on (the bridge writes a pending status only, no comment).
         hold = sections_of(detail, HOLD_HEADER).split('\n')
-        body['summary'] = f'{context}: pending, waits on {hold[0][len(HOLD_HEADER):].strip()} (public run {run_id})'[:SUMMARY_MAX_CHARS]
+        body['summary'] = summary_of(f'{context}: pending, waits on {hold[0][len(HOLD_HEADER):].strip()} (public run {run_id})', env)
     elif state in ('failure', 'error') and detail.strip():
         body['detail'] = fit_bytes(detail, DETAIL_MAX_BYTES)
     elif state == 'success' and gate and notes_of(detail):
@@ -1160,6 +1190,41 @@ def pr_meta(env, opener=urllib.request.urlopen, run=subprocess.run, now=time.tim
     return 0
 
 
+def tier_of(env, read=read_pr_meta):
+    """(tier, why) of this run: TIER_LIGHT only for a pull_request whose ref is no train head, with the switch `on`,
+    whose labels /pr-meta answered without TIER_LABEL; TIER_FULL on anything else, an unreadable read included.
+    The read is made only when every other condition already allows light."""
+    event, ref, switch = env.get('NIKATRU_P_EVENT', ''), env.get('NIKATRU_P_REF', ''), env.get(TIER_SWITCH, '')
+    seen = f'{event or "(no event)"} on {ref or "(no ref)"}, {TIER_SWITCH}={switch or "(unset)"}'
+    if event != 'pull_request':
+        return TIER_FULL, f'{seen}: not a pull_request'
+    if TRAIN_REF.match(ref):
+        return TIER_FULL, f'{seen}: a train head runs full'
+    if switch != 'on':
+        return TIER_FULL, f'{seen}: the switch is not `on`'
+    answer, why = read(env)
+    if answer is None:
+        return TIER_FULL, f'{seen}, labels unread: /pr-meta could not be read ({why}), failing closed'
+    labels = answer.get('labels')
+    if not isinstance(labels, list) or not all(isinstance(l, str) for l in labels):
+        return TIER_FULL, f'{seen}, labels unread: /pr-meta answered no list of labels, failing closed'
+    if TIER_LABEL in labels:
+        return TIER_FULL, f'{seen}, labels {json.dumps(sorted(labels))}: the PR carries {TIER_LABEL}'
+    return TIER_LIGHT, f'{seen}, labels {json.dumps(sorted(labels))}'
+
+
+def tier(env, read=read_pr_meta):
+    """The pin job's tier step: `tier=<light|full>` to $GITHUB_OUTPUT, the decision and its reason printed. Exit 0
+    always: a crash leaves the output unset, and the job output reads an unset tier as full."""
+    t, why = tier_of(env, read)
+    print(f'tier={t}: {why}')
+    out = env.get('GITHUB_OUTPUT', '')
+    if out:
+        with open(out, 'a', encoding='utf-8') as f:
+            f.write(f'tier={t}\n')
+    return 0
+
+
 def gate_meta(env, value):
     """The step output `meta` (GITHUB_OUTPUT), which the gate job carries to the report job as `outputs.meta`."""
     out = env.get('GITHUB_OUTPUT', '')
@@ -1186,12 +1251,14 @@ def main(argv, env):
             return derive(env)
         if len(argv) == 1 and argv[0] == 'pr-meta':
             return pr_meta(env)
+        if len(argv) == 1 and argv[0] == 'tier':
+            return tier(env)
         if len(argv) == 2 and argv[0] == 'place':
             return place(argv[1])
         if len(argv) == 2 and argv[0] in ('plan', 'collect', 'send'):
             cfg = load_config(argv[1])
             return {'plan': plan, 'collect': collect, 'send': send}[argv[0]](env, cfg)
-        print('usage: report.py handoff | derive | pr-meta | plan <config> | place <key> | collect <config> | send <config>', file=sys.stderr)
+        print('usage: report.py handoff | derive | pr-meta | tier | plan <config> | place <key> | collect <config> | send <config>', file=sys.stderr)
         return 2
     except Lost as e:
         print(f'x COVERAGE LOST - report.py: {e}', file=sys.stderr)

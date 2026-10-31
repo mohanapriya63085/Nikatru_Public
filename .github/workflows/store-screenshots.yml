@@ -5,7 +5,7 @@ env:
 
 name: Store screenshots
 
-run-name: "Store screenshots · ${{ inputs.app }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
+run-name: "Store screenshots · ${{ inputs.app }}${{ inputs.channel && format(' · {0}', inputs.channel) || '' }}${{ inputs.channel == 'android-play' && ' (Google Play)' || inputs.channel == 'linux-snap' && ' (Snap Store)' || inputs.channel == 'windows-store' && ' (Microsoft Store)' || inputs.channel == 'macos-appstore' && ' (Apple App Store (macOS))' || inputs.channel == 'ios-appstore' && ' (Apple App Store (iOS))' || '' }}${{ inputs.dry_run && ' · dry run' || '' }}${{ inputs.video && ' · promo video' || '' }}${{ inputs.private_pr && format(' — branch proof {0} (PR #{1})', inputs.private_ref, inputs.private_pr) || '' }}"
 
 on:
   workflow_dispatch:
