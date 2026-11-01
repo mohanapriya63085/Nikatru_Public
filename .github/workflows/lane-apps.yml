@@ -301,6 +301,7 @@ jobs:
           cat > "$NIKATRU_QUIET" <<'NIKATRU_QUIET_EOF'
           git add -A
           node tooling/app-yaml/render.mjs
+          node tooling/i18n/infoplist-strings.mjs
           node --single-threaded tooling/store/render-linux-icons.mjs
           node tooling/app-yaml/render-privacy.mjs
           node docs/platform/digilocker/app/bin/render-apps.mjs
