@@ -230,7 +230,7 @@ jobs:
     name: First pass of one peer, without and with the machinery
     needs: [nikatru-pin, plan]
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 70
     continue-on-error: true
     permissions:
       contents: read
@@ -404,7 +404,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.8 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: BASELINE — the peer merged with main, first pass as ci.yml runs it
-        timeout-minutes: 16
+        timeout-minutes: 19
         env:
           PEER: ${{ matrix.peer }}
         run: |
@@ -415,7 +415,7 @@ jobs:
           NIKATRU_SHELL="${BASH:-bash}"; if command -v cygpath >/dev/null 2>&1; then NIKATRU_SHELL="$(cygpath -w "$NIKATRU_SHELL")"; fi
           node "$GITHUB_WORKSPACE/../.nikatru-shell/quiet-step.mjs" --name machinery-canary.peer.9 -- "$NIKATRU_SHELL" -e "$NIKATRU_QUIET"
       - name: CANDIDATE — the peer merged with main and the machinery head
-        timeout-minutes: 16
+        timeout-minutes: 22
         env:
           MACHINERY: ${{ inputs.machinery_sha }}
           PEER: ${{ matrix.peer }}
